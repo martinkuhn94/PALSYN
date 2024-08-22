@@ -1,0 +1,37 @@
+from setuptools import setup, find_packages
+
+setup(
+    name='PBLES',
+    version='0.0.1',
+    author='Martin Kuhn',
+    author_email='martin.kuhn@dfki.de',
+    description='Private Bi-LSTM Event Log Synthesizer (PBLES)',
+    long_description=open('README.md').read(),
+    long_description_content_type='PBLES (Private Bi-LSTM Event Log Synthesizer) is a tool designed to generate process-oriented synthetic healthcare data. It addresses the privacy concerns in healthcare data sharing by integrating differential privacy techniques. ',
+    url='GitHub-Repo',
+    packages=find_packages(),
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Developers',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+    ],
+    keywords='Event Logs Synthetization, Differential Privacy, Bi-LSTM, Synthetic Data Generation',
+    install_requires=[
+        'pandas==1.5.3',
+        'numpy==1.23.5',
+        'tensorflow==2.14.0',
+        'scipy==1.12.0',
+        'keras==2.14.0',
+        'pm4py==2.5.2',
+        'scikit-learn==1.4.1.post1',
+        'tensorflow_privacy==0.9.0',
+        'sdmetrics==0.13.0',
+        'openpyxl==3.1.2',
+        'pyemd==1.0.0',
+    ],
+    python_requires='>=3.8',
+)

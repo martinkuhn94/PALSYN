@@ -1,0 +1,11 @@
+pandas==1.5.3
+numpy==1.23.5
+tensorflow==2.14.0
+scipy==1.12.0
+keras==2.14.0
+pm4py==2.5.2
+scikit-learn==1.4.1.post1
+tensorflow_privacy==0.9.0
+sdmetrics==0.13.0
+openpyxl==3.1.2
+pyemd==1.0.0
