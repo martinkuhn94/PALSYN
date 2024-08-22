@@ -73,6 +73,9 @@ xes_filename = "DP_Bi_LSTM_Sepsis_Case_event_log_e=01.xes"
 pm4py.write_xes(event_log_xes, xes_filename)
 ```
 
+## Future Work
+Future work will focus on enhancing the algorithm and making it available on PyPI.
+
 ## Contribution
 
 We welcome contributions from the community. If you have any suggestions or issues, please create a GitHub issue or a pull request. 
