@@ -55,6 +55,9 @@ def calculate_time_between_events(df: pd.DataFrame) -> list:
 
     Returns:
     list: A list of time between events for each trace in the DataFrame, given in seconds as Unix time.
+
+    Raises:
+    ValueError: If required columns are missing or if there are issues in date conversion.
     """
     if 'case:concept:name' not in df or 'time:timestamp' not in df:
         raise ValueError("DataFrame must contain 'case:concept:name' and 'time:timestamp' columns")
@@ -79,7 +82,7 @@ def calculate_time_between_events(df: pd.DataFrame) -> list:
     return time_between_events
 
 
-def calculate_cluster(df, max_clusters):
+def calculate_cluster(df: pd.DataFrame, max_clusters: int) -> tuple:
     """
     Calculate clusters for each numeric column in a pandas DataFrame. The number of clusters is determined by the number
     of unique values in a column. If the number of unique values is smaller than the maximum number of clusters, the
@@ -154,6 +157,8 @@ def get_attribute_dtype_mapping(df: pd.DataFrame) -> dict:
     Returns:
     dict: A dictionary where keys are attribute names (column names) and values are their respective data types.
 
+    Raises:
+    TypeError: If the input is not a pandas DataFrame.
     """
     if not isinstance(df, pd.DataFrame):
         raise TypeError("Input must be a pandas DataFrame")
@@ -183,7 +188,7 @@ def get_event_attribute_dict(df: pd.DataFrame) -> dict:
     return concept_name_attribute_dict
 
 
-def preprocess_event_log(log, max_clusters: int, trace_quantile: float):
+def preprocess_event_log(log, max_clusters: int, trace_quantile: float) -> tuple:
     """
     Preprocess an event log. The event log is transformed into a pandas DataFrame. The time between events is calculated
     and added to the DataFrame. The DataFrame is clustered and the cluster information is added to the DataFrame. The
@@ -200,6 +205,11 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float):
     cluster_dict (dict): Dictionary with cluster information for each numeric columns.
     attribute_dtype_mapping (dict): Dictionary with attribute data types.
     starting_epoch_dist (list): List with mean and standard deviation of starting epochs.
+    event_attribute_dict (dict): Dictionary with unique values of each attribute in the event log.
+    num_examples (int): Number of examples in the event log.
+
+    Raises:
+    ValueError: If there are issues in converting the log to a DataFrame.
     """
     try:
         df = pm4py.convert_to_dataframe(log)

@@ -31,8 +31,7 @@ pip install -r requirements.txt
 ## Usage
 
 ### Training the Model 
-To train the model, use the following example with a given event log:
-
+For the training of the model, the stacked layers are configured with 32, 16 and 8 LSTM units respectively, and an embedding dimension of 16. The model trains for 3 epochs with a batch size of 16. The number of clusters for numerical attributes is set to 10, and to speed up the training, only the top 50% quantile of traces by length are considered, in this example. The noise multiplier is set to 0.0, which means that the model is trained without differential privacy. To train the model with differential privacy, set the noise multiplier to a value greater than 0.0. The epsilon value can be retrieved after training the model.
 ```bash
 import pm4py
 from PBLES.event_log_dp_lstm import EventLogDpLstm
@@ -42,34 +41,33 @@ path = "Sepsis_Cases_Event_Log.xes"
 event_log = pm4py.read_xes(path)
 
 # Train Model
-bi_lstm_model = EventLogDpLstm(lstm_units=64, embedding_output_dims=16, epochs=3, batch_size=16,
-                               max_clusters=25, dropout=0.0, trace_quantile=0.5, noise_multiplier=1.1,
-                               l2_norm_clip=1.5)
+pbles_model = EventLogDpLstm(lstm_units=32, embedding_output_dims=16, epochs=3, batch_size=16,
+                               max_clusters=10, trace_quantile=0.5, noise_multiplier=0.0)
 
-bi_lstm_model.fit(event_log)
-bi_lstm_model.save_model("models/DP_Bi_LSTM_e=inf_Diabetes")
+pbles_model.fit(event_log)
+pbles_model.save_model("models/DP_Bi_LSTM_e=inf_Sepsis_Cases_Event_Log_test")
 
 # Print Epsilon to verify Privacy Guarantees
-print(bi_lstm_model.epsilon)
+print(pbles_model.epsilon)
 ```
 
 ### Sampling Event Logs 
-To sample synthetic event logs, use the following example with a trained model:
-
+To sample synthetic event logs, use the following example with a trained model can be used. The sample size is set to 160, and the batch size is set to 16. The synthetic event log is saved as a XES file.
+Pretrained models can be found in the "models" folder.
 ```bash
 import pm4py
 from PBLES.event_log_dp_lstm import EventLogDpLstm
 
 # Load Model
-lstmmodel = EventLogDpLstm()
-lstmmodel.load("models/DP_Bi_LSTM_e=01_Sepsis_Case")
+pbles_model = EventLogDpLstm()
+pbles_model.load("models/DP_Bi_LSTM_e=inf_Sepsis_Case")
 
 # Sample
-event_log = lstmmodel.sample(160, 16, temperature=1.0)
+event_log = pbles_model.sample(sample_size=160, batch_size=16)
 event_log_xes = pm4py.convert_to_event_log(event_log)
 
 # Save as XES File
-xes_filename = "DP_Bi_LSTM_Sepsis_Case_event_log_e=01.xes"
+xes_filename = "Synthetic_Sepsis_Case_Event_Log.xes"
 pm4py.write_xes(event_log_xes, xes_filename)
 ```
 

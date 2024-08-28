@@ -4,7 +4,7 @@ import tensorflow as tf
 import numpy as np
 
 
-def tokenize_log(event_log_sentences, variant):
+def tokenize_log(event_log_sentences: list, variant: str) -> tuple:
     """
     Tokenize event log sentences based on the specified variant ('control-flow' or 'attributes').
 
@@ -15,6 +15,9 @@ def tokenize_log(event_log_sentences, variant):
     Returns:
     tuple: Tokenized event log sentences, one-hot encoded labels, total number of words,
            maximum sequence length, and tokenizer.
+
+    Raises:
+    ValueError: If event_log_sentences is not a list and when the variant is not 'control-flow' or 'attributes'.
     """
     if not isinstance(event_log_sentences, list):
         raise ValueError("event_log_sentences must be a list")

@@ -2,13 +2,13 @@ import pm4py
 from PBLES.event_log_dp_lstm import EventLogDpLstm
 
 # Load Model
-lstmmodel = EventLogDpLstm()
-lstmmodel.load("models/DP_Bi_LSTM_e=01_Sepsis_Case")
+pbles_model = EventLogDpLstm()
+pbles_model.load("models/DP_Bi_LSTM_e=inf_Sepsis_Case")
 
 # Sample
-event_log = lstmmodel.sample(160, 16, temperature=1.0)
+event_log = pbles_model.sample(sample_size=160, batch_size=16)
 event_log_xes = pm4py.convert_to_event_log(event_log)
 
 # Save as XES File
-xes_filename = "DP_Bi_LSTM_Sepsis_Case_event_log_e=01.xes"
+xes_filename = "Synthetic_Sepsis_Case_Event_Log.xes"
 pm4py.write_xes(event_log_xes, xes_filename)

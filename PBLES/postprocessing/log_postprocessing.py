@@ -6,8 +6,8 @@ import pandas as pd
 from scipy.stats import norm
 
 
-def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch,
-                event_attribute_dict) -> pd.DataFrame:
+def generate_df(synthetic_event_log_sentences: list, cluster_dict: dict, dict_dtypes: dict, start_epoch: list,
+                event_attribute_dict: dict) -> pd.DataFrame:
     """
     Generate a DataFrame from synthetic event log sentences.
 
@@ -86,7 +86,7 @@ def clean_event_attribute_mappings(df: pd.DataFrame, event_attribute_dict: dict)
     return df_clean
 
 
-def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
+def create_start_epoch(start_epoch: list) -> datetime.datetime:
     """
     Create a start epoch for the synthetic event log generation. The start epoch is generated using a normal
     distribution with the mean and standard deviation specified in the start_epoch list. The generated epoch is then
@@ -106,7 +106,7 @@ def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
     return epoch
 
 
-def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch) -> list[list[str]]:
+def transform_sentences(synthetic_event_log_sentences: list, cluster_dict: dict, dict_dtypes: dict, start_epoch: list) -> list[list[str]]:
     """
     Transform synthetic event log sentences by processing each word in the sentence and updating the temporary sentence.
 
@@ -127,9 +127,8 @@ def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes
 
         temp_sentence = ["case:concept:name==" + str(datetime.datetime.now().timestamp()).replace(".", "")]
         epoch = create_start_epoch(start_epoch)
-
         for word in sentence:
-            temp_sentence = process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch)
+            temp_sentence, epoch = process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch)
 
         transformed_sentences.append(temp_sentence)
 
@@ -138,7 +137,7 @@ def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes
     return transformed_sentences
 
 
-def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch) -> list[str]:
+def process_word(word: str, temp_sentence: list, dict_dtypes: dict, cluster_dict: dict, epoch: datetime.datetime) -> tuple[list[str], datetime.datetime]:
     """
     Process a word in the sentence and update the temporary sentence list.
 
@@ -180,7 +179,7 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch) -> list[
             timestamp_string = timestamp_string + datetime.timedelta(seconds=1)
         temp_sentence.append(f"time:timestamp=={timestamp_string}")
 
-    return temp_sentence
+    return temp_sentence, epoch
 
 
 def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.DataFrame:
