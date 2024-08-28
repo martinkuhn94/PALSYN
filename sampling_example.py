@@ -12,3 +12,8 @@ event_log_xes = pm4py.convert_to_event_log(event_log)
 # Save as XES File
 xes_filename = "Synthetic_Sepsis_Case_Event_Log.xes"
 pm4py.write_xes(event_log_xes, xes_filename)
+
+# Save as XSLX File for quick inspection
+df = pm4py.convert_to_dataframe(event_log_xes)
+df['time:timestamp'] = df['time:timestamp'].astype(str)
+df.to_excel("Synthetic_Sepsis_Case_Event_Log.xlsx", index=False)
