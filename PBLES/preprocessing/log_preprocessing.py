@@ -253,7 +253,6 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float) -> tuple
         event_log_sentence_list.append(trace_sentence_list)
 
     event_attribute_dict = get_event_attribute_dict(df)
-    print(event_attribute_dict)
 
     return (event_log_sentence_list, cluster_dict, attribute_dtype_mapping, starting_epoch_dist, event_attribute_dict,
             num_examples)

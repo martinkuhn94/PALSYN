@@ -46,6 +46,4 @@ def tokenize_log(event_log_sentences: list, variant: str) -> tuple:
     xs, labels = input_sequences[:, :-1], input_sequences[:, -1]
     ys = tf.keras.utils.to_categorical(labels, num_classes=total_words)
 
-    print("delta", len(xs))
-
     return xs, ys, total_words, max_sequence_len, tokenizer
