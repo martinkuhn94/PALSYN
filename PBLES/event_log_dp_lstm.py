@@ -93,7 +93,7 @@ class EventLogDpLstm:
         input_data (Any): Input data for training the model, typically an event log.
         """
 
-        print("Initializing Hierarchical-Multi-Head-Attention-LSTM Model")
+        print("Initializing LSTM Model")
 
         # Convert Event Log to sentences and preprocess
         (
