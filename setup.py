@@ -29,8 +29,7 @@ setup(
         'pm4py==2.5.2',
         'scikit-learn==1.4.1.post1',
         'tensorflow_privacy==0.9.0',
-        'openpyxl==3.1.2',
-        'pyemd==1.0.0',
+        'openpyxl==3.1.2'
     ],
     python_requires='>=3.8',
 )
