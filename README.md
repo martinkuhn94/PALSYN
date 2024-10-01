@@ -15,14 +15,25 @@ other similar regulations, must be confirmed before sharing data, even if strong
 - **Differential Privacy:** Ensures privacy by incorporating differential privacy techniques.
 
 ## Installation
+PBLES can be installed through two methods: via pip or by cloning the repository and manually installing the necessary dependencies.
 
-To install PBLES, first clone the repository:
+### Installation via pip
+To install PBLES using pip, run the following command:
+```bash
+pip install PBLES
+```
 
+
+### Installation with Git
+
+To install PBLES by cloning the repository, follow these steps.
+
+Clone the repository:
 ```bash
 git clone https://github.com/martinkuhn94/PBLES.git
 ```
 
-Then, install the required dependencies:
+Install the required dependencies:
 
 ```bash
 pip install -r requirements.txt
