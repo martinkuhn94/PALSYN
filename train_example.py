@@ -1,16 +1,25 @@
 import pm4py
 from PBLES.event_log_dp_lstm import EventLogDpLstm
+import tensorflow as tf
+
+# Check for GPU
+print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
+
 
 # Read Event Log
-path = "Sepsis_Cases_Event_Log.xes"
+# Road_Traffic_Fine_Management_Process.xes
+#path = "example_logs/Road_Traffic_Fine_Management_Process_short.xes"
+#path = "example_logs/Hospital Billing - Event Log_short.xes"
+path = "example_logs/BPI Challenge 2017_short.xes"
 event_log = pm4py.read_xes(path)
 
 # Train Model
-pbles_model = EventLogDpLstm(lstm_units=32, embedding_output_dims=16, epochs=3, batch_size=16,
-                               max_clusters=10, trace_quantile=0.5, noise_multiplier=0.0)
+bi_lstm_model = EventLogDpLstm(embedding_output_dims=32, epochs=1, batch_size=512,
+                                          max_clusters=5, dropout=0.0, trace_quantile=0.9, epsilon=10,
+                                          l2_norm_clip=1.0, method="GRU", units_per_layer=[32, 16])
 
-pbles_model.fit(event_log)
-pbles_model.save_model("models/DP_Bi_LSTM_e=inf_Sepsis_Cases_Event_Log_test")
+bi_lstm_model.fit(event_log)
+bi_lstm_model.save_model("models/DP-GRU_Road_Fines_u=32_e=0.1")
 
 # Print Epsilon to verify Privacy Guarantees
-print(pbles_model.epsilon)
+print(bi_lstm_model.epsilon)
