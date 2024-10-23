@@ -6,8 +6,7 @@ import pandas as pd
 from scipy.stats import norm
 
 
-def generate_df(synthetic_event_log_sentences: list, cluster_dict: dict, dict_dtypes: dict, start_epoch: list,
-                event_attribute_dict: dict) -> pd.DataFrame:
+def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch) -> pd.DataFrame:
     """
     Generate a DataFrame from synthetic event log sentences.
 
@@ -28,7 +27,6 @@ def generate_df(synthetic_event_log_sentences: list, cluster_dict: dict, dict_dt
     df = create_dataframe_from_sentences(transformed_sentences, dict_dtypes)
 
     # Clean and reorder DataFrame
-    df = clean_event_attribute_mappings(df, event_attribute_dict)
     df = reorder_and_sort_df(df)
 
     return df
@@ -62,31 +60,7 @@ def reorder_and_sort_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def clean_event_attribute_mappings(df: pd.DataFrame, event_attribute_dict: dict) -> pd.DataFrame:
-    """
-    Clean the event attribute mappings in the DataFrame by setting the columns to NA that are not present in
-    the event_attribute_dict for each event and sorting the final DataFrame.
-
-    Parameters:
-    df (pd.DataFrame): DataFrame containing event log data.
-    event_attribute_dict (dict): Dictionary containing event attribute mappings.
-
-    Returns:
-    pd.DataFrame: Cleaned DataFrame with only the relevant columns set for each event type.
-    """
-    df_clean = pd.DataFrame()
-
-    for event in df['concept:name'].unique():
-        if event in event_attribute_dict:
-            df_temp = df[df['concept:name'] == event]
-            expected_cols = event_attribute_dict[event]
-            df_temp = df_temp.loc[:, df_temp.columns.intersection(expected_cols)]
-            df_clean = pd.concat([df_clean, df_temp], ignore_index=True)
-
-    return df_clean
-
-
-def create_start_epoch(start_epoch: list) -> datetime.datetime:
+def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
     """
     Create a start epoch for the synthetic event log generation. The start epoch is generated using a normal
     distribution with the mean and standard deviation specified in the start_epoch list. The generated epoch is then
@@ -106,7 +80,7 @@ def create_start_epoch(start_epoch: list) -> datetime.datetime:
     return epoch
 
 
-def transform_sentences(synthetic_event_log_sentences: list, cluster_dict: dict, dict_dtypes: dict, start_epoch: list) -> list[list[str]]:
+def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch) -> list[list[str]]:
     """
     Transform synthetic event log sentences by processing each word in the sentence and updating the temporary sentence.
 
@@ -137,7 +111,7 @@ def transform_sentences(synthetic_event_log_sentences: list, cluster_dict: dict,
     return transformed_sentences
 
 
-def process_word(word: str, temp_sentence: list, dict_dtypes: dict, cluster_dict: dict, epoch: datetime.datetime) -> tuple[list[str], datetime.datetime]:
+def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
     """
     Process a word in the sentence and update the temporary sentence list.
 
@@ -157,12 +131,12 @@ def process_word(word: str, temp_sentence: list, dict_dtypes: dict, cluster_dict
     else:
         key = parts[0]
         value = "0"
-
     if key in dict_dtypes and key != 'time:timestamp':
         if value in cluster_dict:
             generation_input = cluster_dict[value]
             dist = norm(loc=generation_input[2], scale=generation_input[3])
             value = dist.rvs(1)[0]
+            value = round(value, 5) if dict_dtypes[key] == "float" or dict_dtypes[key] == "float64" else round(value)
             temp_sentence.append(f"{key}=={value}")
         else:
             temp_sentence.append(word)
@@ -234,6 +208,11 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
     df['time:timestamp'] = df.groupby('case:concept:name')['time:timestamp'].transform(
         lambda x: x.ffill() if pd.isna(x.iloc[0]) else x)
 
+    # Replace all nan values with empty string
+    df = df.fillna('')
+    # replace "nan" with ""
+    df = df.replace("nan", "")
+
     return df
 
 
@@ -250,8 +229,11 @@ def convert_column_dtype(column: pd.Series, dtype: str) -> pd.Series:
     pd.Series: Converted column.
     """
     if dtype == "int":
+        # round each element in column on next integer
+        column = column.round()
         return column.astype(int)
     elif dtype == "float" or dtype == "float64":
+        # round each element on 5 decimal places
         return column.astype(float) if column.name != "time:timestamp" else column.astype(str)
     elif dtype == "boolean":
         return column.astype(bool)

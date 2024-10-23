@@ -13,33 +13,34 @@ from keras.layers import (
     Embedding,
     LSTM,
     Masking,
+    GRU,
 )
-from tensorflow_privacy.privacy.analysis import compute_dp_sgd_privacy_lib
 from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
     DPKerasAdamOptimizer,
 )
 
 from PBLES.preprocessing.log_preprocessing import preprocess_event_log
 from PBLES.preprocessing.log_tokenization import tokenize_log
-from PBLES.sampling.log_sampling import sample_batch
+from PBLES.sampling.log_sampling import sample_batch_markov
 from PBLES.postprocessing.log_postprocessing import generate_df
 
 
 class EventLogDpLstm:
     def __init__(
             self,
-            lstm_units=64,
             embedding_output_dims=16,
+            method='LSTM',
+            units_per_layer=None,
             epochs=3,
             batch_size=16,
             max_clusters=10,
             dropout=0.0,
             trace_quantile=0.95,
             l2_norm_clip=1.5,
-            noise_multiplier=1.0,
+            epsilon=1.0,
     ):
         """
-        Class of the Private Bi-LSTM Event Log Synthesizer (PBLES) approach for synthesizing event logs. The class is
+        Class of the Private Bi-LSTM Event Log Synthesizer (CPBLES) approach for synthesizing event logs. The class is
         based on a DP-Bi-LSTM model and thus implements differential privacy. This synthesizer is multi-perspective.
 
         Parameters:
@@ -59,7 +60,7 @@ class EventLogDpLstm:
         self.event_log_sentences = None
         self.max_clusters = max_clusters
         self.trace_quantile = trace_quantile
-        self.event_attribute_dict = None
+        self.event_attribute_model = None
 
         # Attribute Preprocessing Information
         self.model = None
@@ -71,7 +72,8 @@ class EventLogDpLstm:
         self.start_epoch = None
 
         # Model Information
-        self.lstm_units = lstm_units
+        self.units_per_layer = units_per_layer
+        self.method = method
         self.embedding_output_dims = embedding_output_dims
         self.epochs = epochs
         self.batch_size = batch_size
@@ -79,9 +81,9 @@ class EventLogDpLstm:
         self.petri_net = None
 
         # Privacy Information
-        self.epsilon = None
+        self.noise_multiplier = None
+        self.epsilon = epsilon
         self.l2_norm_clip = l2_norm_clip
-        self.noise_multiplier = noise_multiplier
         self.num_examples = None
 
     def fit(self, input_data: pd.DataFrame) -> None:
@@ -92,8 +94,7 @@ class EventLogDpLstm:
         Parameters:
         input_data (Any): Input data for training the model, typically an event log.
         """
-
-        print("Initializing LSTM Model")
+        print(f"Initializing {self.method} Model")
 
         # Convert Event Log to sentences and preprocess
         (
@@ -101,9 +102,12 @@ class EventLogDpLstm:
             self.cluster_dict,
             self.dict_dtypes,
             self.start_epoch,
-            self.event_attribute_dict,
-            self.num_examples
-        ) = preprocess_event_log(input_data, self.max_clusters, self.trace_quantile)
+            self.num_examples,
+            self.event_attribute_model,
+            self.noise_multiplier
+        ) = preprocess_event_log(input_data, self.max_clusters, self.trace_quantile, (self.epsilon / 2),
+                                 self.batch_size,
+                                 self.epochs)
 
         # Tokenize Attributes
         (
@@ -114,8 +118,7 @@ class EventLogDpLstm:
             self.tokenizer
         ) = tokenize_log(self.event_log_sentences, variant='attributes')
 
-        print("Creating LSTM Model")
-
+        print(f"Creating {self.method} Model")
         # Input layer
         inputs = Input(shape=(self.max_sequence_len - 1,))
 
@@ -126,24 +129,24 @@ class EventLogDpLstm:
             input_length=self.max_sequence_len - 1
         )(inputs)
 
-        # Masking layer
-        masking_layer = Masking(mask_value=0)(embedding_layer)
+        # Masking layer (handles variable-length sequences with padding)
+        x = Masking(mask_value=0)(embedding_layer)
 
-        # First Bi-directional LSTM layer with return_sequences=True to pass sequences to the next LSTM layer
-        lstm_layer1 = Bidirectional(LSTM(self.lstm_units, return_sequences=True))(masking_layer)
-
-        # Second Bi-directional LSTM layer, also with return_sequences=True
-        lstm_layer2 = Bidirectional(LSTM(int(self.lstm_units / 2), return_sequences=True))(lstm_layer1)
-
-        # Third Bi-directional LSTM layer with return_sequences=False to get the last output only
-        lstm_layer3 = Bidirectional(LSTM(int(self.lstm_units / 4)))(lstm_layer2)
+        # Dynamically add layers based on method and units_per_layer
+        for i, units in enumerate(self.units_per_layer):
+            if self.method == 'LSTM':
+                x = LSTM(units, return_sequences=(i < len(self.units_per_layer) - 1))(x)
+            elif self.method == 'Bi-LSTM':
+                x = Bidirectional(LSTM(units, return_sequences=(i < len(self.units_per_layer) - 1)))(x)
+            elif self.method == 'GRU':
+                x = GRU(units, return_sequences=(i < len(self.units_per_layer) - 1))(x)
 
         # Batch Normalization and Dropout layers
-        batch_normalization = BatchNormalization()(lstm_layer3)
-        dropout_layer = Dropout(self.dropout)(batch_normalization)
+        x = BatchNormalization()(x)
+        x = Dropout(self.dropout)(x)
 
         # Output layer
-        outputs = Dense(self.total_words, activation='softmax')(dropout_layer)
+        outputs = Dense(self.total_words, activation='softmax')(x)
 
         # Differentially Private Optimizer
         dp_optimizer = DPKerasAdamOptimizer(
@@ -170,18 +173,7 @@ class EventLogDpLstm:
             callbacks=[EarlyStopping(monitor='loss', verbose=1, patience=5)]
         )
 
-        # Compute Privacy Budget
-        epsilon = compute_dp_sgd_privacy_lib.compute_dp_sgd_privacy_statement(
-            number_of_examples=self.num_examples,
-            batch_size=self.batch_size,
-            num_epochs=self.epochs,
-            noise_multiplier=self.noise_multiplier,
-            used_microbatching=False,
-            delta=1 / (len(self.event_log_sentences) ** 1.1),
-        )
-        self.epsilon = epsilon
-
-    def sample(self, sample_size: int, batch_size: int,  temperature: float = 1.0) -> pd.DataFrame:
+    def sample(self, sample_size: int, batch_size: int, temperature: float = 1.0) -> pd.DataFrame:
         """
         Sample an event log from a trained DP-Bi-LSTM Model. The model must be trained before sampling. The sampling
         process can be controlled by the temperature parameter, which controls the randomness of sampling process.
@@ -201,13 +193,14 @@ class EventLogDpLstm:
             print("Sampling Event Log with:", sample_size - len_synthetic_event_log, "traces left")
             sample_size_new = sample_size - len_synthetic_event_log
 
-            synthetic_event_log_sentences = sample_batch(
+            synthetic_event_log_sentences = sample_batch_markov(
                 sample_size_new,
                 self.tokenizer,
                 self.max_sequence_len,
                 self.model,
-                temperature,
-                batch_size
+                self.event_attribute_model,
+                batch_size,
+                temperature
             )
 
             # Generate Event Log DataFrame
@@ -215,8 +208,7 @@ class EventLogDpLstm:
                 synthetic_event_log_sentences,
                 self.cluster_dict,
                 self.dict_dtypes,
-                self.start_epoch,
-                self.event_attribute_dict
+                self.start_epoch
             )
 
             df.reset_index(drop=True, inplace=True)
@@ -237,6 +229,8 @@ class EventLogDpLstm:
 
         self.model.save(os.path.join(path, 'model.keras'))
 
+        self.event_attribute_model.to_excel(os.path.join(path, 'event_attribute_model.xlsx'), index=False)
+
         with open(os.path.join(path, 'tokenizer.pkl'), 'wb') as handle:
             pickle.dump(self.tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -252,9 +246,6 @@ class EventLogDpLstm:
         with open(os.path.join(path, 'start_epoch.pkl'), 'wb') as handle:
             pickle.dump(self.start_epoch, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-        with open(os.path.join(path, 'event_attribute_dict.pkl'), 'wb') as handle:
-            pickle.dump(self.event_attribute_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
     def load(self, path: str) -> None:
         """
         Load a trained PBLES Model from a given path.
@@ -263,6 +254,8 @@ class EventLogDpLstm:
         path (str): Path to the trained PBLES Model.
         """
         self.model = tf.keras.models.load_model(os.path.join(path, 'model.keras'), compile=False)
+
+        self.event_attribute_model = pd.read_excel(os.path.join(path, 'event_attribute_model.xlsx'))
 
         with open(os.path.join(path, 'tokenizer.pkl'), 'rb') as handle:
             self.tokenizer = pickle.load(handle)
@@ -278,6 +271,3 @@ class EventLogDpLstm:
 
         with open(os.path.join(path, 'start_epoch.pkl'), 'rb') as handle:
             self.start_epoch = pickle.load(handle)
-
-        with open(os.path.join(path, 'event_attribute_dict.pkl'), 'rb') as handle:
-            self.event_attribute_dict = pickle.load(handle)

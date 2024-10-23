@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='PBLES',
-    version='0.0.1',
+    version='0.0.2',
     author='Martin Kuhn',
     author_email='martin.kuhn@dfki.de',
     description='Private Bi-LSTM Event Log Synthesizer (PBLES)',
