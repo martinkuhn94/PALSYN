@@ -48,7 +48,6 @@ def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=
         )
 
         current_epsilon = extract_epsilon_from_string(current_epsilon)
-        print(f"Current epsilon: {current_epsilon}, Noise Multiplier: {mid}")
 
         if abs(current_epsilon - target_epsilon) <= tol:
             best_noise_multiplier = mid
@@ -65,7 +64,13 @@ def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=
         #print warning message
         print(f"Warning: Noise multiplier could not be found within the maximum number of iterations. "
               f"Choosing the highest noise multiplier: {best_noise_multiplier}"
-              f"Consider chosing another Epsilon values better suited to the dataset and the model configurations")
+              f"Consider choosing another Epsilon values better suited to the dataset and the model configurations")
+    else:
+        print(f"Optimal Noise multiplier found: {best_noise_multiplier}")
+        print(f"Since three differential Privacy Techniques are used, the epsilon is divided in the following way: ")
+        print(f"DP Bounds: {target_epsilon * 0.75}")
+        print(f"DP-KMeans: {target_epsilon * 0.25}")
+        print(f"DP-SDG: {target_epsilon}")
 
     return best_noise_multiplier
 
@@ -311,9 +316,7 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     num_examples = len(df)
 
     # Find noise multiplier
-    print("Finding noise multiplier")
-    print("The epsilon is divided by 2 to ensure that the total epsilon is equal to the input epsilon since "
-          "DP-SDG and DP-Kmeans are performed")
+    print("Finding Optimal Noise Multiplier")
     noise_multiplier = find_noise_multiplier(epsilon, num_examples, batch_size, epochs)
 
     starting_epoch_dist = calculate_starting_epoch(df)
@@ -322,7 +325,7 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     attribute_dtype_mapping = get_attribute_dtype_mapping(df)
     # Epsilon is divided by 2 to ensure that the total epsilon is equal to the input epsilon since
     # DP-SDG and DP-Kmeans are performed sequentially
-    df, cluster_dict = calculate_cluster_dp(df, max_clusters, (epsilon / 2))
+    df, cluster_dict = calculate_cluster_dp(df, max_clusters, epsilon)
 
     cols = ['concept:name', 'time:timestamp'] + [col for col in df.columns if col not in ['concept:name', 'time'
                                                                                                           ':timestamp']]
@@ -339,11 +342,10 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
         for row in df_temp.iterrows():
             concept_name = row[1]['concept:name']
             for col in df.columns:
-                if not col.startswith('case:'):
-                    if str(row[1][col]) != "nan":
-                        trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]))
-                    else:
-                        trace_sentence_list.append(concept_name + "==" + col + "==" + "nan")
+                if str(row[1][col]) != "nan":
+                    trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]))
+                else:
+                    trace_sentence_list.append(concept_name + "==" + col + "==" + "nan")
 
         trace_sentence_list.append("END==END")
         event_log_sentence_list.append(trace_sentence_list)
