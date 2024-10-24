@@ -151,7 +151,7 @@ def sample_batch_markov(
                     next_words_possible = [index_word.get(i, '') for i in next_words_possible]
                     next_word = random.choices(next_words_possible, weights=prediction_output_normalized, k=1)[0]
                     seq.append(next_word)
-                    if next_word == 'END==END' or len(seq) >= max_sequence_len_attr:
+                    if next_word == 'END==END' or len(seq) >= max_sequence_len_attr * 2:
                         batch_active[i] = False
 
                 else:
@@ -163,7 +163,7 @@ def sample_batch_markov(
                     next_word = index_word.get(predicted_index, '')
 
                     seq.append(next_word)
-                    if next_word == 'END==END' or len(seq) >= max_sequence_len_attr:
+                    if next_word == 'END==END' or len(seq) >= max_sequence_len_attr * 2:
                         batch_active[i] = False
 
         synthetic_event_log_sentences.extend(batch_seed_texts)

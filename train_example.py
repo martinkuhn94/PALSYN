@@ -16,10 +16,10 @@ event_log = pm4py.read_xes(path)
 # Train Model
 bi_lstm_model = EventLogDpLstm(embedding_output_dims=32, epochs=1, batch_size=512,
                                           max_clusters=5, dropout=0.0, trace_quantile=0.9, epsilon=10,
-                                          l2_norm_clip=1.0, method="GRU", units_per_layer=[32, 16])
+                                          l2_norm_clip=1.0, method="GRU", units_per_layer=[16, 8])
 
 bi_lstm_model.fit(event_log)
-bi_lstm_model.save_model("models/DP-GRU_Road_Fines_u=32_e=0.1")
+bi_lstm_model.save_model("models/DP-GRU_BPI_Challenge_2017_u=32_e=10")
 
 # Print Epsilon to verify Privacy Guarantees
 print(bi_lstm_model.epsilon)
