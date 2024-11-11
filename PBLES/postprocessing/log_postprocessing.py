@@ -43,16 +43,16 @@ def reorder_and_sort_df(df: pd.DataFrame) -> pd.DataFrame:
     Returns:
     pd.DataFrame: Reordered and sorted DataFrame.
     """
-    if 'case:concept:name' in df.columns and 'time:timestamp' in df.columns:
-        df.sort_values(by=['case:concept:name', 'time:timestamp'], inplace=True)
+    if "case:concept:name" in df.columns and "time:timestamp" in df.columns:
+        df.sort_values(by=["case:concept:name", "time:timestamp"], inplace=True)
 
     columns_order = []
-    if 'case:concept:name' in df.columns:
-        columns_order.append('case:concept:name')
-    if 'concept:name' in df.columns:
-        columns_order.append('concept:name')
-    if 'time:timestamp' in df.columns:
-        columns_order.append('time:timestamp')
+    if "case:concept:name" in df.columns:
+        columns_order.append("case:concept:name")
+    if "concept:name" in df.columns:
+        columns_order.append("concept:name")
+    if "time:timestamp" in df.columns:
+        columns_order.append("time:timestamp")
 
     other_columns = [col for col in df.columns if col not in columns_order]
     df = df[columns_order + other_columns]
@@ -95,8 +95,13 @@ def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes
     """
     transformed_sentences = []
     for sentence, case_id in zip(synthetic_event_log_sentences, range(len(synthetic_event_log_sentences))):
-        print('\r' + "Converting into Event Log " + str(
-            round((case_id + 1) / len(synthetic_event_log_sentences) * 100, 1)) + '% Complete', end='')
+        print(
+            "\r"
+            + "Converting into Event Log "
+            + str(round((case_id + 1) / len(synthetic_event_log_sentences) * 100, 1))
+            + "% Complete",
+            end="",
+        )
         sys.stdout.flush()
 
         temp_sentence = ["case:concept:name==" + str(datetime.datetime.now().timestamp()).replace(".", "")]
@@ -106,7 +111,7 @@ def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes
 
         transformed_sentences.append(temp_sentence)
 
-    print('\n')
+    print("\n")
 
     return transformed_sentences
 
@@ -131,7 +136,7 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
     else:
         key = parts[0]
         value = "0"
-    if key in dict_dtypes and key != 'time:timestamp':
+    if key in dict_dtypes and key != "time:timestamp":
         if value in cluster_dict:
             generation_input = cluster_dict[value]
             dist = norm(loc=generation_input[2], scale=generation_input[3])
@@ -140,7 +145,7 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
             temp_sentence.append(f"{key}=={value}")
         else:
             temp_sentence.append(word)
-    elif key == 'time:timestamp':
+    elif key == "time:timestamp":
         generation_input = cluster_dict[value]
         dist = norm(loc=generation_input[2], scale=generation_input[3])
         value = abs(dist.rvs(1)[0])
@@ -175,8 +180,9 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
 
     for sentence in transformed_sentences:
         try:
-            case_dict = {word.split("==")[0]: word.split("==")[1] for word in sentence if
-                         word.split("==")[0].startswith("case:")}
+            case_dict = {
+                word.split("==")[0]: word.split("==")[1] for word in sentence if word.split("==")[0].startswith("case:")
+            }
             event_indices = [i for i, s in enumerate(sentence) if s.startswith("concept:name")]
             event_indices.pop(0)
             events = np.split(sentence, event_indices)
@@ -186,7 +192,7 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
                 event_dict.update(case_dict)
                 event_dict_list.append(event_dict)
             parsed_data.append(event_dict_list)
-        except:
+        except Exception:
             removed_traces += 1
 
     df = pd.DataFrame()
@@ -197,19 +203,21 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
         if key in df.columns:
             df[key] = convert_column_dtype(df[key], value)
 
-    if 'time:timestamp' not in df.columns:
-        df['time:timestamp'] = [pd.Timestamp('2000-01-01').strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")] * len(df)
+    if "time:timestamp" not in df.columns:
+        df["time:timestamp"] = [pd.Timestamp("2000-01-01").strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")] * len(df)
     else:
-        df['time:timestamp'] = pd.to_datetime(df['time:timestamp'], errors='coerce')
+        df["time:timestamp"] = pd.to_datetime(df["time:timestamp"], errors="coerce")
 
-    df.sort_values(by=['case:concept:name', 'time:timestamp'], inplace=True)
-    df['time:timestamp'] = df.groupby('case:concept:name')['time:timestamp'].transform(
-        lambda x: x.interpolate(method='ffill'))
-    df['time:timestamp'] = df.groupby('case:concept:name')['time:timestamp'].transform(
-        lambda x: x.ffill() if pd.isna(x.iloc[0]) else x)
+    df.sort_values(by=["case:concept:name", "time:timestamp"], inplace=True)
+    df["time:timestamp"] = df.groupby("case:concept:name")["time:timestamp"].transform(
+        lambda x: x.interpolate(method="ffill")
+    )
+    df["time:timestamp"] = df.groupby("case:concept:name")["time:timestamp"].transform(
+        lambda x: x.ffill() if pd.isna(x.iloc[0]) else x
+    )
 
     # Replace all nan values with empty string
-    df = df.fillna('')
+    df = df.fillna("")
     # replace "nan" with ""
     df = df.replace("nan", "")
 

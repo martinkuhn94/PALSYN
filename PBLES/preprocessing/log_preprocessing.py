@@ -21,7 +21,7 @@ def extract_epsilon_from_string(text):
     :return:
     """
     # Regex to find the line with epsilon assuming Poisson sampling or similar
-    epsilon_poisson_match = re.search(r'Epsilon assuming Poisson sampling \(\*\):\s+([^\s]+)', text)
+    epsilon_poisson_match = re.search(r"Epsilon assuming Poisson sampling \(\*\):\s+([^\s]+)", text)
 
     if epsilon_poisson_match:
         epsilon_poisson = epsilon_poisson_match.group(1)
@@ -32,7 +32,7 @@ def extract_epsilon_from_string(text):
 
 
 def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=1e-4, max_iter=100):
-    delta = 1 / (num_examples ** 1.1)
+    delta = 1 / (num_examples**1.1)
     low, high = 1e-6, 30  # Initial bounds for noise multiplier
     best_noise_multiplier = None
 
@@ -44,7 +44,7 @@ def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=
             num_epochs=epochs,
             noise_multiplier=mid,
             used_microbatching=False,
-            delta=delta
+            delta=delta,
         )
 
         current_epsilon = extract_epsilon_from_string(current_epsilon)
@@ -61,13 +61,15 @@ def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=
     # if noise_multiplier cannot be found after all iterations choose "high"
     if best_noise_multiplier is None:
         best_noise_multiplier = high
-        #print warning message
-        print(f"Warning: Noise multiplier could not be found within the maximum number of iterations. "
-              f"Choosing the highest noise multiplier: {best_noise_multiplier}"
-              f"Consider choosing another Epsilon values better suited to the dataset and the model configurations")
+        # print warning message
+        print(
+            f"Warning: Noise multiplier could not be found within the maximum number of iterations. "
+            f"Choosing the highest noise multiplier: {best_noise_multiplier}"
+            f"Consider choosing another Epsilon values better suited to the dataset and the model configurations"
+        )
     else:
         print(f"Optimal Noise multiplier found: {best_noise_multiplier}")
-        print(f"Since three differential Privacy Techniques are used, the epsilon is divided in the following way: ")
+        print("Since three differential Privacy Techniques are used, the epsilon is divided in the following way: ")
         print(f"DP Bounds: {target_epsilon * 0.75}")
         print(f"DP-KMeans: {target_epsilon * 0.25}")
         print(f"DP-SDG: {target_epsilon}")
@@ -183,8 +185,12 @@ def calculate_cluster_dp(df, max_clusters, epsilon):
             dataframe_temp_values = dataframe[dataframe[dataframe.columns[1]] == cluster]
             dataframe_temp_cluster_values = dataframe_temp_values[dataframe_temp_values.columns[0]]
             dataframe_temp_cluster_values_np = dataframe_temp_cluster_values.to_numpy()
-            cluster_dict[cluster] = [min(dataframe_temp_cluster_values_np), max(dataframe_temp_cluster_values_np),
-                                     dataframe_temp_cluster_values_np.mean(), dataframe_temp_cluster_values_np.std()]
+            cluster_dict[cluster] = [
+                min(dataframe_temp_cluster_values_np),
+                max(dataframe_temp_cluster_values_np),
+                dataframe_temp_cluster_values_np.mean(),
+                dataframe_temp_cluster_values_np.std(),
+            ]
 
     return df, cluster_dict
 
@@ -205,14 +211,14 @@ def calculate_starting_epoch(df: pd.DataFrame) -> list:
     ValueError: If required columns are missing or if there are issues in date conversion.
     """
     try:
-        if 'case:concept:name' not in df or 'time:timestamp' not in df:
+        if "case:concept:name" not in df or "time:timestamp" not in df:
             raise ValueError("DataFrame must contain 'case:concept:name' and 'time:timestamp' columns")
 
-        df['time:timestamp'] = pd.to_datetime(df['time:timestamp'])
+        df["time:timestamp"] = pd.to_datetime(df["time:timestamp"])
 
-        starting_epochs = df.sort_values(by='time:timestamp').groupby('case:concept:name')['time:timestamp'].first()
+        starting_epochs = df.sort_values(by="time:timestamp").groupby("case:concept:name")["time:timestamp"].first()
 
-        starting_epoch_list = starting_epochs.astype(np.int64) // 10 ** 9
+        starting_epoch_list = starting_epochs.astype(np.int64) // 10**9
 
         if len(starting_epoch_list) < len(starting_epochs):
             print("Warning: Some traces did not have valid starting timestamps and were excluded from the calculation.")
@@ -241,22 +247,22 @@ def calculate_time_between_events(df: pd.DataFrame) -> list:
     Returns:
     list: A list of time between events for each trace in the DataFrame, given in seconds as Unix time.
     """
-    if 'case:concept:name' not in df or 'time:timestamp' not in df:
+    if "case:concept:name" not in df or "time:timestamp" not in df:
         raise ValueError("DataFrame must contain 'case:concept:name' and 'time:timestamp' columns")
 
     try:
-        df['time:timestamp'] = pd.to_datetime(df['time:timestamp'])
+        df["time:timestamp"] = pd.to_datetime(df["time:timestamp"])
     except Exception as e:
         raise ValueError(f"Error converting 'time:timestamp' to datetime: {e}")
 
     time_between_events = []
 
-    for _, group in df.groupby('case:concept:name'):
+    for _, group in df.groupby("case:concept:name"):
         if len(group) < 2:
             time_between_events.append(0)
             continue
 
-        time_diffs = group['time:timestamp'].diff().dt.total_seconds().copy()
+        time_diffs = group["time:timestamp"].diff().dt.total_seconds().copy()
         time_diffs.fillna(0, inplace=True)
         time_diffs.iloc[0] = 0
         time_between_events.extend(time_diffs)
@@ -305,14 +311,14 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     except Exception as e:
         raise ValueError(f"Error converting log to DataFrame: {e}")
 
-    print("Number of traces: " + str(df['case:concept:name'].unique().size))
+    print("Number of traces: " + str(df["case:concept:name"].unique().size))
 
-    trace_length = df.groupby('case:concept:name').size()
+    trace_length = df.groupby("case:concept:name").size()
     trace_length_q = trace_length.quantile(trace_quantile)
-    df = df.groupby('case:concept:name').filter(lambda x: len(x) <= trace_length_q)
+    df = df.groupby("case:concept:name").filter(lambda x: len(x) <= trace_length_q)
 
-    print("Number of traces after truncation: " + str(df['case:concept:name'].unique().size))
-    df = df.sort_values(by=['case:concept:name', 'time:timestamp'])
+    print("Number of traces after truncation: " + str(df["case:concept:name"].unique().size))
+    df = df.sort_values(by=["case:concept:name", "time:timestamp"])
     num_examples = len(df)
 
     # Find noise multiplier
@@ -321,26 +327,27 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
 
     starting_epoch_dist = calculate_starting_epoch(df)
     time_between_events = calculate_time_between_events(df)
-    df['time:timestamp'] = time_between_events
+    df["time:timestamp"] = time_between_events
     attribute_dtype_mapping = get_attribute_dtype_mapping(df)
     # Epsilon is divided by 2 to ensure that the total epsilon is equal to the input epsilon since
     # DP-SDG and DP-Kmeans are performed sequentially
     df, cluster_dict = calculate_cluster_dp(df, max_clusters, epsilon)
 
-    cols = ['concept:name', 'time:timestamp'] + [col for col in df.columns if col not in ['concept:name', 'time'
-                                                                                                          ':timestamp']]
+    cols = ["concept:name", "time:timestamp"] + [
+        col for col in df.columns if col not in ["concept:name", "time" ":timestamp"]
+    ]
     df = df[cols]
     event_attribute_model = build_attribute_model(df)
 
     event_log_sentence_list = []
-    for trace in df['case:concept:name'].unique():
-        df_temp = df[df['case:concept:name'] == trace]
+    for trace in df["case:concept:name"].unique():
+        df_temp = df[df["case:concept:name"] == trace]
         trace_sentence_list = ["START==START"]
         for global_attribute in df_temp:
-            if global_attribute.startswith('case:') and global_attribute != 'case:concept:name':
+            if global_attribute.startswith("case:") and global_attribute != "case:concept:name":
                 trace_sentence_list.append(global_attribute + "==" + str(df_temp[global_attribute].iloc[0]))
         for row in df_temp.iterrows():
-            concept_name = row[1]['concept:name']
+            concept_name = row[1]["concept:name"]
             for col in df.columns:
                 if str(row[1][col]) != "nan":
                     trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]))
@@ -350,5 +357,12 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
         trace_sentence_list.append("END==END")
         event_log_sentence_list.append(trace_sentence_list)
 
-    return (event_log_sentence_list, cluster_dict, attribute_dtype_mapping, starting_epoch_dist,
-            num_examples, event_attribute_model, noise_multiplier)
+    return (
+        event_log_sentence_list,
+        cluster_dict,
+        attribute_dtype_mapping,
+        starting_epoch_dist,
+        num_examples,
+        event_attribute_model,
+        noise_multiplier,
+    )
