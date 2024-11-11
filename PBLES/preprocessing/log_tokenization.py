@@ -22,12 +22,12 @@ def tokenize_log(event_log_sentences: list, variant: str) -> tuple:
     if not isinstance(event_log_sentences, list):
         raise ValueError("event_log_sentences must be a list")
 
-    if variant == 'control-flow':
+    if variant == "control-flow":
         event_log_sentences = [
-            [word for word in sentence if word.startswith('concept:name') or word in ['START==START', 'END==END']]
+            [word for word in sentence if word.startswith("concept:name") or word in ["START==START", "END==END"]]
             for sentence in event_log_sentences
         ]
-    elif variant != 'attributes':
+    elif variant != "attributes":
         raise ValueError("Variant not found. Please choose between 'control-flow' and 'attributes'")
 
     tokenizer = Tokenizer(lower=False)
@@ -38,11 +38,11 @@ def tokenize_log(event_log_sentences: list, variant: str) -> tuple:
     for line in event_log_sentences:
         token_list = tokenizer.texts_to_sequences([line])[0]
         for i in range(1, len(token_list)):
-            n_gram_sequence = token_list[:i + 1]
+            n_gram_sequence = token_list[: i + 1]
             input_sequences.append(n_gram_sequence)
 
     max_sequence_len = max(len(x) for x in input_sequences)
-    input_sequences = np.array(pad_sequences(input_sequences, maxlen=max_sequence_len, padding='pre'))
+    input_sequences = np.array(pad_sequences(input_sequences, maxlen=max_sequence_len, padding="pre"))
     xs, labels = input_sequences[:, :-1], input_sequences[:, -1]
     ys = tf.keras.utils.to_categorical(labels, num_classes=total_words)
 
