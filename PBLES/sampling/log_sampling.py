@@ -145,13 +145,17 @@ def sample_batch_markov(
                     # Make Conditional Predictions
                     prediction_output = predictions[i]
                     prediction_output = [prediction_output[j] for j in next_words_possible]
+                    if sum(prediction_output) == 0:
+                        prediction_output = [1.0 / len(next_words_possible)] * len(next_words_possible)
+                    else:
+                        prediction_output = prediction_output / np.sum(prediction_output)
                     prediction_output = prediction_output / np.sum(prediction_output)
                     prediction_output_sq = np.power(prediction_output, temperature_attr)
                     prediction_output_normalized = prediction_output_sq / np.sum(prediction_output_sq)
                     next_words_possible = [index_word.get(i, "") for i in next_words_possible]
                     next_word = random.choices(next_words_possible, weights=prediction_output_normalized, k=1)[0]
                     seq.append(next_word)
-                    if next_word == "END==END" or len(seq) >= max_sequence_len_attr * 2:
+                    if next_word == "END==END" or len(seq) >= max_sequence_len_attr:
                         batch_active[i] = False
 
                 else:
@@ -164,7 +168,7 @@ def sample_batch_markov(
                     next_word = index_word.get(predicted_index, "")
 
                     seq.append(next_word)
-                    if next_word == "END==END" or len(seq) >= max_sequence_len_attr * 2:
+                    if next_word == "END==END" or len(seq) >= max_sequence_len_attr:
                         batch_active[i] = False
 
         synthetic_event_log_sentences.extend(batch_seed_texts)
