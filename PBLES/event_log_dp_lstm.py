@@ -17,8 +17,12 @@ from keras.layers import (
     GRU,
     MultiHeadAttention,
     GlobalAveragePooling1D,
+    SimpleRNN,
+    MaxPooling1D,
+    Conv1D,
     LayerNormalization, Add
 )
+
 from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
     DPKerasAdamOptimizer,
 )
@@ -109,7 +113,25 @@ class EventLogDpLstm:
             elif self.method == "GRU":
                 x = GRU(units, return_sequences=True)(x)
             elif self.method == "Attention-LSTM":
-                x = LSTM(units, return_sequences=True)(x)  # LSTM processing first
+                x = LSTM(units, return_sequences=True)(x)  # LSTM layer
+                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
+            elif self.method == "RNN":
+                x = SimpleRNN(units, return_sequences=True)(x)
+            elif self.method == "Attention-RNN":
+                x = SimpleRNN(units, return_sequences=True)(x)  # RNN layer
+                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
+            elif self.method == "Bi-RNN":
+                x = Bidirectional(SimpleRNN(units, return_sequences=True))(x)
+            elif self.method == "Bi-RNN-Attention":
+                x = Bidirectional(SimpleRNN(units, return_sequences=True))(x)  # Bidirectional RNN layer
+                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
+            elif self.method == "Bi-GRU":
+                x = Bidirectional(GRU(units, return_sequences=True))(x)
+            elif self.method == "Bi-GRU-Attention":
+                x = Bidirectional(GRU(units, return_sequences=True))(x)  # Bidirectional GRU layer
+                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
+            elif self.method == "Attention-GRU":
+                x = GRU(units, return_sequences=True)(x)  # GRU layer
                 x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
 
         # Batch Normalization and Dropout layers

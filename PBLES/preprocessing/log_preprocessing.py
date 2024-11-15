@@ -289,23 +289,6 @@ def get_attribute_dtype_mapping(df: pd.DataFrame) -> dict:
 
 
 def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon: float, batch_size: int, epochs: int):
-    """
-    Preprocess an event log. The event log is transformed into a pandas DataFrame. The time between events is calculated
-    and added to the DataFrame. The DataFrame is clustered and the cluster information is added to the DataFrame. The
-    DataFrame is transformed into a list of event log sentences. Each event log sentence is like a list of words.
-    Each word is a string of the form 'attribute_name==attribute_value'.
-
-    Parameters:
-    trace_quantile (float): Quantile used to truncate trace length.
-    log: Event Log (XES).
-    max_clusters (int): Maximum number of clusters. Is lower if the number of unique values in a column is lower.
-
-    Returns:
-    event_log_sentence_list (list): List of event log sentences
-    cluster_dict (dict): Dictionary with cluster information for each numeric columns.
-    attribute_dtype_mapping (dict): Dictionary with attribute data types.
-    starting_epoch_dist (list): List with mean and standard deviation of starting epochs.
-    """
     try:
         df = pm4py.convert_to_dataframe(log)
     except Exception as e:
@@ -329,8 +312,6 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     time_between_events = calculate_time_between_events(df)
     df["time:timestamp"] = time_between_events
     attribute_dtype_mapping = get_attribute_dtype_mapping(df)
-    # Epsilon is divided by 2 to ensure that the total epsilon is equal to the input epsilon since
-    # DP-SDG and DP-Kmeans are performed sequentially
     df, cluster_dict = calculate_cluster_dp(df, max_clusters, epsilon)
 
     cols = ["concept:name", "time:timestamp"] + [
@@ -340,23 +321,28 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     event_attribute_model = build_attribute_model(df)
 
     event_log_sentence_list = []
-    for trace in df["case:concept:name"].unique():
+    total_traces = df["case:concept:name"].nunique()
+
+    for i, trace in enumerate(df["case:concept:name"].unique(), start=1):
+        print(f"\rProcessing trace {i} of {total_traces}", end="", flush=True)
         df_temp = df[df["case:concept:name"] == trace]
+        df_temp = df_temp.drop(columns=['case:concept:name'])
         trace_sentence_list = ["START==START"]
+
         for global_attribute in df_temp:
             if global_attribute.startswith("case:") and global_attribute != "case:concept:name":
                 trace_sentence_list.append(global_attribute + "==" + str(df_temp[global_attribute].iloc[0]))
+
         for row in df_temp.iterrows():
             concept_name = row[1]["concept:name"]
-            for col in df.columns:
-                if str(row[1][col]) != "nan":
-                    trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]))
-                else:
-                    trace_sentence_list.append(concept_name + "==" + col + "==" + "nan")
+            for col in df_temp.columns:
+                trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]) if str(
+                    row[1][col]) != "nan" else concept_name + "==" + col + "==" + "nan")
 
         trace_sentence_list.append("END==END")
         event_log_sentence_list.append(trace_sentence_list)
 
+    print()
     return (
         event_log_sentence_list,
         cluster_dict,
