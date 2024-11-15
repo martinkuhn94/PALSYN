@@ -34,6 +34,9 @@ def tokenize_log(event_log_sentences: list, variant: str) -> tuple:
     tokenizer.fit_on_texts(event_log_sentences)
     total_words = len(tokenizer.word_index) + 1
 
+    # Print the number of unique tokens
+    print(f"Number of unique tokens: {total_words - 1}")
+
     input_sequences = []
     for line in event_log_sentences:
         token_list = tokenizer.texts_to_sequences([line])[0]
@@ -45,5 +48,11 @@ def tokenize_log(event_log_sentences: list, variant: str) -> tuple:
     input_sequences = np.array(pad_sequences(input_sequences, maxlen=max_sequence_len, padding="pre"))
     xs, labels = input_sequences[:, :-1], input_sequences[:, -1]
     ys = tf.keras.utils.to_categorical(labels, num_classes=total_words)
+
+    #print number of input sequences
+    print(f"Number of input sequences: {len(input_sequences)}")
+
+    # Print maximum sequence length
+    print(f"Maximum sequence length: {max_sequence_len}")
 
     return xs, ys, total_words, max_sequence_len, tokenizer

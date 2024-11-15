@@ -155,7 +155,7 @@ def sample_batch_markov(
                     next_words_possible = [index_word.get(i, "") for i in next_words_possible]
                     next_word = random.choices(next_words_possible, weights=prediction_output_normalized, k=1)[0]
                     seq.append(next_word)
-                    if next_word == "END==END" or len(seq) >= max_sequence_len_attr:
+                    if next_word == "END==END" or len(seq) >= (max_sequence_len_attr * 2):
                         batch_active[i] = False
 
                 else:
@@ -180,9 +180,13 @@ def sample_batch_markov(
         sys.stdout.flush()
         K.clear_session()
 
-    # Clean event prefixes
+    # Clean event prefixes and exclude overly long sequences
     clean_synthetic_event_log_sentences = []
     for sentence in synthetic_event_log_sentences:
+        # Skip sequences that are too long
+        if len(sentence) >= (max_sequence_len_attr * 2):
+            continue
+
         trace = []
         for word in sentence:
             if not word:
