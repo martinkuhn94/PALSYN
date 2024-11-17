@@ -6,7 +6,7 @@ pbles_model = EventLogDpLstm()
 pbles_model.load("models/GRU_Hospital_Billing_u=32_e=1")
 
 # Sample
-event_log = pbles_model.sample(sample_size=4006, batch_size=64)
+event_log = pbles_model.sample(sample_size=4006, batch_size=128)
 event_log_xes = pm4py.convert_to_event_log(event_log)
 
 # Save as XES File

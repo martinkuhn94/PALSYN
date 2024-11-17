@@ -63,20 +63,30 @@ def reorder_and_sort_df(df: pd.DataFrame) -> pd.DataFrame:
 def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
     """
     Create a start epoch for the synthetic event log generation. The start epoch is generated using a normal
-    distribution with the mean and standard deviation specified in the start_epoch list. The generated epoch is then
-    converted to a datetime object. The start epoch is used to generate the timestamps for the synthetic event log.
+    distribution with the mean and standard deviation specified in the start_epoch list. The generated epoch is
+    then checked against the min and max bounds. If the value is out of bounds, it is regenerated.
 
     Parameters:
-    start_epoch (list[float]): List containing the mean and standard deviation for the normal distribution used to
-    generate the start epoch.
+    start_epoch (list[float]): List containing:
+                               [mean, standard deviation, min bound, max bound]
+                               for the normal distribution used to generate the start epoch.
 
     Returns:
     datetime.datetime: Start epoch as a datetime object.
     """
-    epoch_dist = norm(loc=start_epoch[0], scale=start_epoch[1])
-    epoch_value = abs(epoch_dist.rvs(1)[0])
-    epoch = datetime.datetime.fromtimestamp(epoch_value)
+    dp_mean, dp_std, min_bound, max_bound = start_epoch  # Unpack the list
+    epoch_dist = norm(loc=dp_mean, scale=dp_std)
 
+    while True:
+        # Generate a value from the normal distribution
+        epoch_value = epoch_dist.rvs(1)[0]
+
+        # Check if the value is within bounds
+        if min_bound <= epoch_value <= max_bound:
+            break
+
+    # Convert to datetime and return
+    epoch = datetime.datetime.fromtimestamp(epoch_value)
     return epoch
 
 
