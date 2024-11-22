@@ -1,4 +1,5 @@
 import re
+import yaml
 
 import numpy as np
 import pandas as pd
@@ -65,7 +66,6 @@ def calculate_fixed_bins(df, num_bins):
     return df, bin_dict
 
 
-
 def extract_epsilon_from_string(text):
     """
     Poisson sampling is not usually done in training pipelines, but assuming
@@ -88,7 +88,7 @@ def extract_epsilon_from_string(text):
 
 
 def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=1e-4, max_iter=100):
-    delta = 1 / (num_examples**1.1)
+    delta = 1 / (num_examples ** 1.1)
     low, high = 1e-6, 30  # Initial bounds for noise multiplier
     best_noise_multiplier = None
 
@@ -192,6 +192,7 @@ def calculate_dp_bounds(df, epsilon, lower_quantile=0.01, upper_quantile=0.99):
 
     return dp_bounds
 
+
 def calculate_cluster_dp(df, max_clusters, epsilon):
     """
     Calculate clusters for each numeric column in a pandas DataFrame using DP-KMeans and differentially private bounds.
@@ -217,7 +218,6 @@ def calculate_cluster_dp(df, max_clusters, epsilon):
     df_org = df.copy()
     df_cluster_list = []
 
-    # Step 1: Calculate DP bounds for numeric columns
     dp_bounds = calculate_dp_bounds(df, epsilon_bounds)
 
     for col in numeric_cols:
@@ -232,8 +232,7 @@ def calculate_cluster_dp(df, max_clusters, epsilon):
 
         X = df_clean.values.reshape(-1, 1)
 
-        # Use DP-KMeans with the DP bounds
-        bounds = dp_bounds[col]  # Pass noisy bounds as tuple for each column
+        bounds = dp_bounds[col]
         dp_kmeans = KMeans(n_clusters=n_clusters, epsilon=epsilon_k_means, bounds=bounds, random_state=0)
         dp_kmeans.fit(X)
 
@@ -261,7 +260,7 @@ def calculate_cluster_dp(df, max_clusters, epsilon):
                 dataframe_temp_cluster_values_np.mean(),
                 dataframe_temp_cluster_values_np.std(),
             ]
-            print(f"Cluster: {cluster}, Min: {min(dataframe_temp_cluster_values_np)}, Max: {max(dataframe_temp_cluster_values_np)}, Mean: {dataframe_temp_cluster_values_np.mean()}, Std: {dataframe_temp_cluster_values_np.std()}")
+
     return df, cluster_dict
 
 
@@ -290,7 +289,7 @@ def calculate_starting_epoch_dp(df: pd.DataFrame, epsilon: float) -> list:
         starting_epochs = df.sort_values(by="time:timestamp").groupby("case:concept:name")["time:timestamp"].first()
 
         # Convert timestamps to UNIX time (seconds since epoch)
-        starting_epoch_list = starting_epochs.astype(np.int64) // 10**9
+        starting_epoch_list = starting_epochs.astype(np.int64) // 10 ** 9
 
         if len(starting_epoch_list) == 0:
             raise ValueError("No valid starting timestamps found in the data.")
@@ -329,6 +328,7 @@ def calculate_starting_epoch_dp(df: pd.DataFrame, epsilon: float) -> list:
     except Exception as e:
         raise ValueError(f"An error occurred in calculating differentially private starting epochs: {str(e)}")
 
+
 def calculate_time_between_events(df: pd.DataFrame) -> list:
     """
     Calculate the time between events for each trace in a pandas DataFrame.
@@ -365,20 +365,22 @@ def calculate_time_between_events(df: pd.DataFrame) -> list:
 
 def get_attribute_dtype_mapping(df: pd.DataFrame) -> dict:
     """
-    Get the attribute data type mapping from an Event Log (XES). This is necessary to generate synthetic data,
-    maintaining the correct datatypes from the original data.
+    Get the attribute data type mapping from an Event Log (XES) and return it as dictionary.
+    This is necessary to generate synthetic data, maintaining the correct datatypes from the original data.
 
     Parameters:
     df (pd.DataFrame): A pandas DataFrame representing an event log, where columns are attributes.
 
     Returns:
-    dict: A dictionary where keys are attribute names (column names) and values are their respective data types.
-
+    dict: Dictionary containing the attribute data type mapping
     """
     if not isinstance(df, pd.DataFrame):
         raise TypeError("Input must be a pandas DataFrame")
 
-    return df.dtypes.apply(lambda x: x.name).to_dict()
+    # Convert dtypes to dictionary
+    dtype_dict = {'attribute_datatypes': df.dtypes.apply(lambda x: x.name).to_dict()}
+
+    return dtype_dict
 
 
 def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon: float, batch_size: int, epochs: int):
@@ -401,14 +403,15 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     print("Finding Optimal Noise Multiplier")
     noise_multiplier = find_noise_multiplier(epsilon, num_examples, batch_size, epochs)
 
-    starting_epoch_dist = calculate_starting_epoch_dp(df, epsilon) # Epsilon does not need to be shared here since the first timestamp defines a distinct dataset.
+    # Epsilon does not need to be shared here since the first timestamp defines a distinct dataset.
+    starting_epoch_dist = calculate_starting_epoch_dp(df, epsilon)
     time_between_events = calculate_time_between_events(df)
     df["time:timestamp"] = time_between_events
     attribute_dtype_mapping = get_attribute_dtype_mapping(df)
     df, cluster_dict = calculate_cluster_dp(df, max_clusters, epsilon)
 
     cols = ["concept:name", "time:timestamp"] + [
-        col for col in df.columns if col not in ["concept:name", "time" ":timestamp"]
+        col for col in df.columns if col not in ["concept:name", "time:timestamp"]
     ]
     df = df[cols]
     event_attribute_model = build_attribute_model(df)
@@ -416,11 +419,19 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     event_log_sentence_list = []
     total_traces = df["case:concept:name"].nunique()
 
+    # Correct for the case:concept:name column
+    num_cols = len(df.columns) - 1
+    column_list = df.columns.tolist()
+
+    # Remove 'case:concept:name' from the column list if it exists
+    if 'case:concept:name' in column_list:
+        column_list.remove('case:concept:name')
+
     for i, trace in enumerate(df["case:concept:name"].unique(), start=1):
         print(f"\rProcessing trace {i} of {total_traces}", end="", flush=True)
         df_temp = df[df["case:concept:name"] == trace]
         df_temp = df_temp.drop(columns=['case:concept:name'])
-        trace_sentence_list = ["START==START"]
+        trace_sentence_list = ["START==START"] * num_cols
 
         for global_attribute in df_temp:
             if global_attribute.startswith("case:") and global_attribute != "case:concept:name":
@@ -432,7 +443,7 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
                 trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]) if str(
                     row[1][col]) != "nan" else concept_name + "==" + col + "==" + "nan")
 
-        trace_sentence_list.append("END==END")
+        trace_sentence_list.extend(["END==concept:name==END"] * num_cols)
         event_log_sentence_list.append(trace_sentence_list)
 
     print()
@@ -444,4 +455,6 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
         num_examples,
         event_attribute_model,
         noise_multiplier,
+        num_cols,
+        column_list
     )
