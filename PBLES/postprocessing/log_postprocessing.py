@@ -63,20 +63,30 @@ def reorder_and_sort_df(df: pd.DataFrame) -> pd.DataFrame:
 def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
     """
     Create a start epoch for the synthetic event log generation. The start epoch is generated using a normal
-    distribution with the mean and standard deviation specified in the start_epoch list. The generated epoch is then
-    converted to a datetime object. The start epoch is used to generate the timestamps for the synthetic event log.
+    distribution with the mean and standard deviation specified in the start_epoch list. The generated epoch is
+    then checked against the min and max bounds. If the value is out of bounds, it is regenerated.
 
     Parameters:
-    start_epoch (list[float]): List containing the mean and standard deviation for the normal distribution used to
-    generate the start epoch.
+    start_epoch (list[float]): List containing:
+                               [mean, standard deviation, min bound, max bound]
+                               for the normal distribution used to generate the start epoch.
 
     Returns:
     datetime.datetime: Start epoch as a datetime object.
     """
-    epoch_dist = norm(loc=start_epoch[0], scale=start_epoch[1])
-    epoch_value = abs(epoch_dist.rvs(1)[0])
-    epoch = datetime.datetime.fromtimestamp(epoch_value)
+    dp_mean, dp_std, min_bound, max_bound = start_epoch  # Unpack the list
+    epoch_dist = norm(loc=dp_mean, scale=dp_std)
 
+    while True:
+        # Generate a value from the normal distribution
+        epoch_value = epoch_dist.rvs(1)[0]
+
+        # Check if the value is within bounds
+        if min_bound <= epoch_value <= max_bound:
+            break
+
+    # Convert to datetime and return
+    epoch = datetime.datetime.fromtimestamp(epoch_value)
     return epoch
 
 
@@ -123,7 +133,7 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
     Parameters:
     word: The word to process.
     temp_sentence: The temporary sentence list to update.
-    dict_dtypes: Dictionary of data types.
+    dict_dtypes: Dictionary of data types from YAML (nested under 'attribute_datatypes').
     cluster_dict: Dictionary of cluster information.
     epoch: Current epoch time.
 
@@ -136,12 +146,14 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
     else:
         key = parts[0]
         value = "0"
-    if key in dict_dtypes and key != "time:timestamp":
+
+    dtype_mapping = dict_dtypes['attribute_datatypes']
+    if key in dtype_mapping and key != "time:timestamp":
         if value in cluster_dict:
             generation_input = cluster_dict[value]
             dist = norm(loc=generation_input[2], scale=generation_input[3])
             value = dist.rvs(1)[0]
-            value = round(value, 5) if dict_dtypes[key] == "float" or dict_dtypes[key] == "float64" else round(value)
+            value = round(value, 5) if dtype_mapping[key] in ["float", "float64"] else round(value)
             temp_sentence.append(f"{key}=={value}")
         else:
             temp_sentence.append(word)
@@ -170,7 +182,7 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
 
     Parameters:
     transformed_sentences: List of transformed synthetic event log sentences.
-    dict_dtypes: Dictionary of data types.
+    dict_dtypes: Dictionary of data types from YAML (nested under 'attribute_datatypes').
 
     Returns:
     pd.DataFrame: DataFrame created from the transformed synthetic event log sentences.
@@ -199,7 +211,10 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
     for case in parsed_data:
         df = pd.concat([df, pd.DataFrame(case)], ignore_index=True)
 
-    for key, value in dict_dtypes.items():
+    # Access the nested dictionary structure
+    dtype_mapping = dict_dtypes['attribute_datatypes']
+
+    for key, value in dtype_mapping.items():
         if key in df.columns:
             df[key] = convert_column_dtype(df[key], value)
 
@@ -241,7 +256,6 @@ def convert_column_dtype(column: pd.Series, dtype: str) -> pd.Series:
         column = column.round()
         return column.astype(int)
     elif dtype == "float" or dtype == "float64":
-        # round each element on 5 decimal places
         return column.astype(float) if column.name != "time:timestamp" else column.astype(str)
     elif dtype == "boolean":
         return column.astype(bool)

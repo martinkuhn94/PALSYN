@@ -1,4 +1,5 @@
 import re
+import yaml
 
 import numpy as np
 import pandas as pd
@@ -6,8 +7,63 @@ import pm4py
 from diffprivlib.models import KMeans
 from diffprivlib.mechanisms import Laplace
 from tensorflow_privacy import compute_dp_sgd_privacy_statement
+from datetime import datetime
 
 from PBLES.event_attribute_model.event_attribute_model import build_attribute_model
+
+
+def calculate_fixed_bins(df, num_bins):
+    """
+    Create a specified number of equal-sized bins for each numeric column in a DataFrame.
+
+    Parameters:
+    df: Pandas DataFrame.
+    num_bins: Number of bins.
+
+    Returns:
+    tuple: A tuple containing a DataFrame with binned values and a dictionary with bin information.
+    """
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("The input must be a pandas DataFrame")
+
+    if not isinstance(num_bins, int) or num_bins <= 0:
+        raise ValueError("num_bins must be a positive integer")
+
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+
+    bin_dict = {}
+
+    for col in numeric_cols:
+        df_clean = df[col].dropna()
+        if len(df_clean) == 0:
+            continue
+
+        # Calculate min and max values
+        min_val = df_clean.min()
+        max_val = df_clean.max()
+
+        # Calculate bin edges
+        bin_edges = np.linspace(min_val, max_val, num_bins + 1)
+
+        # Assign each value to a bin
+        binned_values = np.digitize(df_clean, bins=bin_edges, right=False) - 1
+        binned_values = np.clip(binned_values, 0, len(bin_edges) - 2)  # Ensure valid bin indices
+
+        # Replace values in the DataFrame with the bin centers
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+        df[col] = binned_values.apply(lambda x: bin_centers[x])
+
+        # Create bin information for the column
+        for i in range(len(bin_edges) - 1):
+            bin_values = df_clean[(df_clean >= bin_edges[i]) & (df_clean < bin_edges[i + 1])]
+            bin_dict[f"{col}_bin_{i}"] = [
+                bin_edges[i],  # Bin start
+                bin_edges[i + 1],  # Bin end
+                bin_centers[i],  # Bin center (mean value for replacement)
+                bin_values.std() if len(bin_values) > 1 else 0.0,  # Standard deviation
+            ]
+
+    return df, bin_dict
 
 
 def extract_epsilon_from_string(text):
@@ -32,7 +88,7 @@ def extract_epsilon_from_string(text):
 
 
 def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=1e-4, max_iter=100):
-    delta = 1 / (num_examples**1.1)
+    delta = 1 / (num_examples ** 1.1)
     low, high = 1e-6, 30  # Initial bounds for noise multiplier
     best_noise_multiplier = None
 
@@ -77,14 +133,15 @@ def find_noise_multiplier(target_epsilon, num_examples, batch_size, epochs, tol=
     return best_noise_multiplier
 
 
-def calculate_dp_bounds(df, epsilon):
+def calculate_dp_bounds(df, epsilon, lower_quantile=0.01, upper_quantile=0.99):
     """
-    Calculate differentially private bounds (min and max) for each numeric column in the dataframe.
-    The sensitivity is calculated as the difference between the maximum and minimum values in each column.
+    Calculate differentially private bounds for numeric columns using quantile-based estimation.
 
     Parameters:
     df (pd.DataFrame): Input dataframe.
     epsilon (float): Privacy budget for calculating the bounds.
+    lower_quantile (float): Lower quantile (e.g., 0.01 for 1st percentile).
+    upper_quantile (float): Upper quantile (e.g., 0.99 for 99th percentile).
 
     Returns:
     dict: A dictionary with differentially private bounds (min, max) for each numeric column.
@@ -95,29 +152,43 @@ def calculate_dp_bounds(df, epsilon):
     for col in numeric_cols:
         col_data = df[col].dropna()
 
-        # Compute the true min and max
-        min_value = col_data.min()
-        max_value = col_data.max()
-        print(f"Column: {col}, Min: {min_value}, Max: {max_value}")
+        # Special handling for "time:timestamp"
+        if col == "time:timestamp":
+            min_value = 0
+            max_value = col_data.quantile(upper_quantile)  # Use upper quantile for timestamp bounds
+            sensitivity = max_value  # Sensitivity assumes max_value derived from upper quantile
 
-        # Sensitivity is calculated as the difference between max and min
-        sensitivity = max_value - min_value
+            # Apply DP to upper quantile only
+            laplace_mechanism_max = Laplace(epsilon=epsilon, sensitivity=sensitivity)
+            noisy_max = laplace_mechanism_max.randomise(max_value)
 
-        # Initialize the Laplace mechanism with epsilon and calculated sensitivity
-        laplace_mechanism_min = Laplace(epsilon=epsilon / 2, sensitivity=sensitivity)
-        laplace_mechanism_max = Laplace(epsilon=epsilon / 2, sensitivity=sensitivity)
+            dp_bounds[col] = (min_value, noisy_max)
+            print(f"Column: {col}, Min (fixed): {min_value}, DP Max: {noisy_max}")
+        else:
+            # Compute the true quantiles
+            true_lower_quantile = col_data.quantile(lower_quantile)
+            true_upper_quantile = col_data.quantile(upper_quantile)
 
-        # Apply Laplace noise to min and max values
-        noisy_min = laplace_mechanism_min.randomise(min_value)
-        noisy_max = laplace_mechanism_max.randomise(max_value)
+            print(f"Column: {col}, Lower Quantile: {true_lower_quantile}, Upper Quantile: {true_upper_quantile}")
 
-        # Ensure min is smaller than max, swap if necessary
-        if noisy_min > noisy_max:
-            noisy_min, noisy_max = noisy_max, noisy_min
+            # Sensitivity is based on the range of the true quantiles
+            sensitivity = true_upper_quantile - true_lower_quantile
 
-        # Store bounds as a tuple (min, max)
-        dp_bounds[col] = (noisy_min, noisy_max)
-        print(f"DP Min: {noisy_min}, DP Max: {noisy_max}")
+            # Initialize the Laplace mechanism with epsilon and calculated sensitivity
+            laplace_mechanism_lower = Laplace(epsilon=epsilon / 2, sensitivity=sensitivity)
+            laplace_mechanism_upper = Laplace(epsilon=epsilon / 2, sensitivity=sensitivity)
+
+            # Apply Laplace noise to the quantiles
+            noisy_lower_quantile = laplace_mechanism_lower.randomise(true_lower_quantile)
+            noisy_upper_quantile = laplace_mechanism_upper.randomise(true_upper_quantile)
+
+            # Ensure the noisy lower quantile is smaller than the noisy upper quantile
+            if noisy_lower_quantile > noisy_upper_quantile:
+                noisy_lower_quantile, noisy_upper_quantile = noisy_upper_quantile, noisy_lower_quantile
+
+            # Store bounds as a tuple (noisy_lower_quantile, noisy_upper_quantile)
+            dp_bounds[col] = (noisy_lower_quantile, noisy_upper_quantile)
+            print(f"DP Lower Quantile: {noisy_lower_quantile}, DP Upper Quantile: {noisy_upper_quantile}")
 
     return dp_bounds
 
@@ -147,7 +218,6 @@ def calculate_cluster_dp(df, max_clusters, epsilon):
     df_org = df.copy()
     df_cluster_list = []
 
-    # Step 1: Calculate DP bounds for numeric columns
     dp_bounds = calculate_dp_bounds(df, epsilon_bounds)
 
     for col in numeric_cols:
@@ -162,8 +232,7 @@ def calculate_cluster_dp(df, max_clusters, epsilon):
 
         X = df_clean.values.reshape(-1, 1)
 
-        # Use DP-KMeans with the DP bounds
-        bounds = dp_bounds[col]  # Pass noisy bounds as tuple for each column
+        bounds = dp_bounds[col]
         dp_kmeans = KMeans(n_clusters=n_clusters, epsilon=epsilon_k_means, bounds=bounds, random_state=0)
         dp_kmeans.fit(X)
 
@@ -195,17 +264,18 @@ def calculate_cluster_dp(df, max_clusters, epsilon):
     return df, cluster_dict
 
 
-def calculate_starting_epoch(df: pd.DataFrame) -> list:
+def calculate_starting_epoch_dp(df: pd.DataFrame, epsilon: float) -> list:
     """
-    Calculate the starting epoch for an event log. The starting epoch is the average starting time of the first events
-    in each trace, represented as unix time. This function calculates the mean and standard deviation of these times.
+    Calculate differentially private starting epoch statistics for an event log.
 
     Parameters:
     df (pd.DataFrame): A DataFrame representing an event log, expected to contain columns
                        'case:concept:name' and 'time:timestamp'.
+    epsilon (float): Privacy budget for differential privacy.
 
     Returns:
-    list: A list containing two elements: the mean and standard deviation of the starting epochs.
+    list: A list containing four elements:
+          [DP Mean, DP Standard Deviation, DP Min (fixed at 0), Max (current timestamp)].
 
     Raises:
     ValueError: If required columns are missing or if there are issues in date conversion.
@@ -214,26 +284,49 @@ def calculate_starting_epoch(df: pd.DataFrame) -> list:
         if "case:concept:name" not in df or "time:timestamp" not in df:
             raise ValueError("DataFrame must contain 'case:concept:name' and 'time:timestamp' columns")
 
+        # Convert timestamp to datetime and sort by it
         df["time:timestamp"] = pd.to_datetime(df["time:timestamp"])
-
         starting_epochs = df.sort_values(by="time:timestamp").groupby("case:concept:name")["time:timestamp"].first()
 
-        starting_epoch_list = starting_epochs.astype(np.int64) // 10**9
+        # Convert timestamps to UNIX time (seconds since epoch)
+        starting_epoch_list = starting_epochs.astype(np.int64) // 10 ** 9
 
-        if len(starting_epoch_list) < len(starting_epochs):
-            print("Warning: Some traces did not have valid starting timestamps and were excluded from the calculation.")
-
-        if len(starting_epoch_list) > 0:
-            starting_epoch_mean = np.mean(starting_epoch_list)
-            starting_epoch_std = np.std(starting_epoch_list)
-            starting_epoch_dist = [starting_epoch_mean, starting_epoch_std]
-        else:
+        if len(starting_epoch_list) == 0:
             raise ValueError("No valid starting timestamps found in the data.")
 
-        return starting_epoch_dist
+        # Calculate true statistics
+        starting_epoch_mean = np.mean(starting_epoch_list)
+        starting_epoch_std = np.std(starting_epoch_list)
+
+        print(f"Real Mean: {starting_epoch_mean}, Real Std: {starting_epoch_std}")
+
+        # Fixed minimum value
+        starting_epoch_min = 0
+
+        # Maximum value is today's timestamp
+        max_timestamp = int(datetime.now().timestamp())
+
+        # Sensitivities
+        n_traces = len(starting_epoch_list)
+        range_epochs = max_timestamp - starting_epoch_min
+
+        sensitivity_mean = range_epochs / n_traces
+        sensitivity_std = range_epochs / np.sqrt(2 * n_traces)  # Approximation for std sensitivity
+
+        # Apply Laplace noise for DP
+        laplace_mechanism_mean = Laplace(epsilon=epsilon / 2, sensitivity=sensitivity_mean)
+        dp_mean = abs(laplace_mechanism_mean.randomise(starting_epoch_mean))
+
+        laplace_mechanism_std = Laplace(epsilon=epsilon / 2, sensitivity=sensitivity_std)
+        dp_std = abs(laplace_mechanism_std.randomise(starting_epoch_std))
+
+        print(f"DP Mean: {dp_mean}, DP Std: {dp_std}")
+
+        # Return results
+        return [dp_mean, dp_std, starting_epoch_min, max_timestamp]
 
     except Exception as e:
-        raise ValueError(f"An error occurred in calculating starting epochs: {str(e)}")
+        raise ValueError(f"An error occurred in calculating differentially private starting epochs: {str(e)}")
 
 
 def calculate_time_between_events(df: pd.DataFrame) -> list:
@@ -272,20 +365,22 @@ def calculate_time_between_events(df: pd.DataFrame) -> list:
 
 def get_attribute_dtype_mapping(df: pd.DataFrame) -> dict:
     """
-    Get the attribute data type mapping from an Event Log (XES). This is necessary to generate synthetic data,
-    maintaining the correct datatypes from the original data.
+    Get the attribute data type mapping from an Event Log (XES) and return it as dictionary.
+    This is necessary to generate synthetic data, maintaining the correct datatypes from the original data.
 
     Parameters:
     df (pd.DataFrame): A pandas DataFrame representing an event log, where columns are attributes.
 
     Returns:
-    dict: A dictionary where keys are attribute names (column names) and values are their respective data types.
-
+    dict: Dictionary containing the attribute data type mapping
     """
     if not isinstance(df, pd.DataFrame):
         raise TypeError("Input must be a pandas DataFrame")
 
-    return df.dtypes.apply(lambda x: x.name).to_dict()
+    # Convert dtypes to dictionary
+    dtype_dict = {'attribute_datatypes': df.dtypes.apply(lambda x: x.name).to_dict()}
+
+    return dtype_dict
 
 
 def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon: float, batch_size: int, epochs: int):
@@ -308,14 +403,15 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     print("Finding Optimal Noise Multiplier")
     noise_multiplier = find_noise_multiplier(epsilon, num_examples, batch_size, epochs)
 
-    starting_epoch_dist = calculate_starting_epoch(df)
+    # Epsilon does not need to be shared here since the first timestamp defines a distinct dataset.
+    starting_epoch_dist = calculate_starting_epoch_dp(df, epsilon)
     time_between_events = calculate_time_between_events(df)
     df["time:timestamp"] = time_between_events
     attribute_dtype_mapping = get_attribute_dtype_mapping(df)
     df, cluster_dict = calculate_cluster_dp(df, max_clusters, epsilon)
 
     cols = ["concept:name", "time:timestamp"] + [
-        col for col in df.columns if col not in ["concept:name", "time" ":timestamp"]
+        col for col in df.columns if col not in ["concept:name", "time:timestamp"]
     ]
     df = df[cols]
     event_attribute_model = build_attribute_model(df)
@@ -323,11 +419,19 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     event_log_sentence_list = []
     total_traces = df["case:concept:name"].nunique()
 
+    # Correct for the case:concept:name column
+    num_cols = len(df.columns) - 1
+    column_list = df.columns.tolist()
+
+    # Remove 'case:concept:name' from the column list if it exists
+    if 'case:concept:name' in column_list:
+        column_list.remove('case:concept:name')
+
     for i, trace in enumerate(df["case:concept:name"].unique(), start=1):
         print(f"\rProcessing trace {i} of {total_traces}", end="", flush=True)
         df_temp = df[df["case:concept:name"] == trace]
         df_temp = df_temp.drop(columns=['case:concept:name'])
-        trace_sentence_list = ["START==START"]
+        trace_sentence_list = ["START==START"] * num_cols
 
         for global_attribute in df_temp:
             if global_attribute.startswith("case:") and global_attribute != "case:concept:name":
@@ -339,7 +443,7 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
                 trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]) if str(
                     row[1][col]) != "nan" else concept_name + "==" + col + "==" + "nan")
 
-        trace_sentence_list.append("END==END")
+        trace_sentence_list.extend(["END==concept:name==END"] * num_cols)
         event_log_sentence_list.append(trace_sentence_list)
 
     print()
@@ -351,4 +455,6 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
         num_examples,
         event_attribute_model,
         noise_multiplier,
+        num_cols,
+        column_list
     )

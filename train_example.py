@@ -8,33 +8,33 @@ print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices("
 
 # Read Event Log
 # Road_Traffic_Fine_Management_Process.xes
-#path = "example_logs/Road_Traffic_Fine_Management_Process_short.xes"
-path = "example_logs/Hospital Billing - Event Log_short.xes"
+path = "example_logs/Road_Traffic_Fine_Management_Process_short.xes"
+#path = "example_logs/Hospital Billing - Event Log_short.xes"
 #path = "example_logs/BPI Challenge 2017_short.xes"
 #path = "example_logs/Sepsis_Cases_Event_Log.xes"
 
 event_log = pm4py.read_xes(path)
-event_log = event_log[["case:concept:name", "concept:name", "time:timestamp"]]
+#event_log = event_log[["case:concept:name", "concept:name", "time:timestamp"]]
 
 
 
 # Train Model
 bi_lstm_model = EventLogDpLstm(
-    embedding_output_dims=64,
-    epochs=3,
-    batch_size=16,
-    max_clusters=5,
+    embedding_output_dims=128,
+    epochs=10,
+    batch_size=128,
+    max_clusters=15,
     dropout=0.0,
-    trace_quantile=0.95,
+    trace_quantile=0.9,
     epsilon=1000000000000,
     l2_norm_clip=1.0,
-    method="GRU",
-    units_per_layer=[64],
-    num_attention_heads=2,
+    method="Bi-LSTM",
+    units_per_layer=[64, 32],
+    num_attention_heads=2
 )
 
 bi_lstm_model.fit(event_log)
-bi_lstm_model.save_model("models/GRU_Hospital_Billing_u=32_e=1")
+bi_lstm_model.save_model("models/Bi-LSTM_Road_Traffic_u=32_e=inf")
 
 # Print Epsilon to verify Privacy Guarantees
 print(bi_lstm_model.epsilon)

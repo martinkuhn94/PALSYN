@@ -9,3 +9,4 @@ tensorflow_privacy==0.9.0
 openpyxl==3.1.2
 diffprivlib~=0.6.5
 setuptools~=68.2.0
+pyyaml==6.0.2
