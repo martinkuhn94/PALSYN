@@ -1,10 +1,12 @@
 import os
 import pickle
+import time
 
 import pandas as pd
 import tensorflow as tf
 import yaml
 from keras import Input, Model
+from tensorflow.keras.callbacks import Callback
 from keras.callbacks import EarlyStopping
 from keras.layers import (
     BatchNormalization,
@@ -15,7 +17,6 @@ from keras.layers import (
     LSTM,
     Masking,
     GRU,
-    MultiHeadAttention,
     GlobalAveragePooling1D,
     SimpleRNN,
 )
@@ -26,8 +27,95 @@ from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
 
 from PBLES.preprocessing.log_preprocessing import preprocess_event_log
 from PBLES.preprocessing.log_tokenization import tokenize_log
-from PBLES.sampling.log_sampling import sample_batch_new
+from PBLES.sampling.log_sampling import sample_batch
 from PBLES.postprocessing.log_postprocessing import generate_df
+
+
+class MetricsLogger(Callback):
+    def __init__(self, num_cols, column_list):
+        super().__init__()
+        self.num_cols = num_cols
+        self.column_list = [col.replace(":", "_").replace(" ", "_") for col in column_list]
+        self.history = []
+        # Disable logging for this callback
+        self._supports_tf_logs = False
+
+    def on_epoch_end(self, epoch, logs=None):
+        epoch_metrics = {'epoch': epoch + 1}
+        logs = logs or {}
+
+        # Silently collect metrics
+        for i in range(self.num_cols):
+            output_acc = f'{self.column_list[i]}_accuracy'
+            output_loss = f'{self.column_list[i]}_loss'
+
+            if output_acc in logs:
+                epoch_metrics[output_acc] = logs[output_acc]
+            if output_loss in logs:
+                epoch_metrics[output_loss] = logs[output_loss]
+
+        if 'loss' in logs:
+            epoch_metrics['total_loss'] = logs['loss']
+
+        self.history.append(epoch_metrics)
+
+    def get_dataframe(self):
+        return pd.DataFrame(self.history)
+
+
+# Custom callback to handle progress bar only
+class CustomProgressBar(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super().__init__()
+        self.last_update = None
+        self.start_time = None
+        self.target = None
+        self.seen = None
+
+    def on_epoch_begin(self, epoch, logs=None):
+        print(f'\nEpoch {epoch + 1}/{self.params["epochs"]}')
+        self.seen = 0
+        self.target = self.params['steps']
+        self.start_time = time.time()
+        self.last_update = time.time()
+
+    def on_batch_end(self, batch, logs=None):
+        self.seen += 1
+        now = time.time()
+
+        # Calculate time per step and ETA
+        time_elapsed = now - self.start_time
+        steps_remaining = self.target - self.seen
+        time_per_step = time_elapsed / self.seen
+        eta_seconds = steps_remaining * time_per_step
+
+        # Format ETA
+        if eta_seconds < 60:
+            eta_str = f"{int(eta_seconds)}s"
+        elif eta_seconds < 3600:
+            eta_str = f"{int(eta_seconds / 60)}m {int(eta_seconds % 60)}s"
+        else:
+            eta_str = f"{int(eta_seconds / 3600)}h {int((eta_seconds % 3600) / 60)}m"
+
+        # Calculate progress bar
+        progress = int(30 * self.seen / self.target)
+        bar = '=' * progress + '>' + '.' * (29 - progress)
+
+        # Calculate time per step (ms)
+        time_per_step_ms = time_per_step * 1000
+
+        print(f'\r{self.seen}/{self.target} [{bar}] - ETA: {eta_str} - {time_per_step_ms:.0f}ms/step', end='')
+
+    def on_epoch_end(self, epoch, logs=None):
+        total_time = time.time() - self.start_time
+        if total_time < 60:
+            time_str = f"{total_time:.0f}s"
+        elif total_time < 3600:
+            time_str = f"{int(total_time / 60)}m {int(total_time % 60)}s"
+        else:
+            time_str = f"{int(total_time / 3600)}h {int((total_time % 3600) / 60)}m"
+
+        print(f'\r{self.target}/{self.target} [==============================] - {time_str}')
 
 
 class EventLogDpLstm:
@@ -42,10 +130,11 @@ class EventLogDpLstm:
             dropout=0.0,
             trace_quantile=0.95,
             l2_norm_clip=1.5,
-            epsilon=1.0,
+            epsilon=None,
             num_attention_heads=4,  # Number of heads for multi-head attention
     ):
         # Initialization as before
+        self.metrics_df = None
         self.dict_dtypes = None
         self.cluster_dict = None
         self.event_log_sentences = None
@@ -78,7 +167,6 @@ class EventLogDpLstm:
         self.num_examples = None
 
     def fit(self, input_data: pd.DataFrame) -> None:
-        # Preprocessing as before
         (
             self.event_log_sentences,
             self.cluster_dict,
@@ -90,21 +178,19 @@ class EventLogDpLstm:
             self.num_cols,
             self.column_list
         ) = preprocess_event_log(
-            input_data, self.max_clusters, self.trace_quantile, (self.epsilon / 2), self.batch_size, self.epochs
+            input_data, self.max_clusters, self.trace_quantile, self.epsilon, self.batch_size, self.epochs
         )
 
         (self.xs, self.ys, self.total_words, self.max_sequence_len, self.tokenizer) = tokenize_log(
             self.event_log_sentences, variant="attributes", steps=self.num_cols
         )
 
-        # Define model architecture with flexible recurrent layer selection
         inputs = Input(shape=(self.max_sequence_len,))
         embedding_layer = Embedding(
             self.total_words, self.embedding_output_dims, input_length=self.max_sequence_len
         )(inputs)
         x = Masking(mask_value=0)(embedding_layer)
 
-        # Recurrent or attention layers
         for i, units in enumerate(self.units_per_layer):
             if self.method == "LSTM":
                 x = LSTM(units, return_sequences=True)(x)
@@ -112,34 +198,17 @@ class EventLogDpLstm:
                 x = Bidirectional(LSTM(units, return_sequences=True))(x)
             elif self.method == "GRU":
                 x = GRU(units, return_sequences=True)(x)
-            elif self.method == "Attention-LSTM":
-                x = LSTM(units, return_sequences=True)(x)  # LSTM layer
-                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
-            elif self.method == "RNN":
-                x = SimpleRNN(units, return_sequences=True)(x)
-            elif self.method == "Attention-RNN":
-                x = SimpleRNN(units, return_sequences=True)(x)  # RNN layer
-                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
-            elif self.method == "Bi-RNN":
-                x = Bidirectional(SimpleRNN(units, return_sequences=True))(x)
-            elif self.method == "Bi-RNN-Attention":
-                x = Bidirectional(SimpleRNN(units, return_sequences=True))(x)  # Bidirectional RNN layer
-                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
             elif self.method == "Bi-GRU":
                 x = Bidirectional(GRU(units, return_sequences=True))(x)
-            elif self.method == "Bi-GRU-Attention":
-                x = Bidirectional(GRU(units, return_sequences=True))(x)  # Bidirectional GRU layer
-                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
-            elif self.method == "Attention-GRU":
-                x = GRU(units, return_sequences=True)(x)  # GRU layer
-                x = MultiHeadAttention(num_heads=self.num_attention_heads, key_dim=units)(x, x)  # Attention layer
+            elif self.method == "RNN":
+                x = SimpleRNN(units, return_sequences=True)(x)
+            elif self.method == "Bi-RNN":
+                x = Bidirectional(SimpleRNN(units, return_sequences=True))(x)
 
-        # Batch Normalization and Dropout layers
-        x = GlobalAveragePooling1D()(x)  # Summarize sequence information
+        x = GlobalAveragePooling1D()(x)
         x = BatchNormalization()(x)
         x = Dropout(self.dropout)(x)
 
-        # Dynamically create multiple output layers based on the number of steps
         outputs = []
         modified_column_list = []
         for column in self.column_list:
@@ -157,7 +226,6 @@ class EventLogDpLstm:
             learning_rate=0.001,
         )
 
-        # Compile the model with multiple outputs
         self.model = Model(inputs=inputs, outputs=outputs)
         self.model.compile(
             loss=["sparse_categorical_crossentropy"] * self.num_cols,  # Loss for each step
@@ -168,24 +236,34 @@ class EventLogDpLstm:
         # Prepare multi-output labels
         y_outputs = [self.ys[:, step] for step in range(self.num_cols)]
 
-        # Modify EarlyStopping to monitor accuracy for the first output
         early_stopping = EarlyStopping(
-            monitor="output_step_1_accuracy",  # Monitor accuracy for the first output
-            mode="max",  # Maximize accuracy
-            verbose=1,
-            patience=5
+            monitor=f"{modified_column_list[0]}_accuracy",
+            mode="max",
+            verbose=0,
+            patience=7,
+            restore_best_weights=True,
+            min_delta=0.001,
+            baseline=None,
+            start_from_epoch=5
         )
 
-        # Fit the model
+        # Create metrics logger with column list
+        metrics_logger = MetricsLogger(num_cols=self.num_cols, column_list=self.column_list)
+        custom_progress_bar = CustomProgressBar()
+
+        # Fit the model with both callbacks
         self.model.fit(
             self.xs,
-            y_outputs,  # List of outputs for each step
+            y_outputs,
             epochs=self.epochs,
             batch_size=self.batch_size,
-            callbacks=[early_stopping],
+            callbacks=[early_stopping, metrics_logger, custom_progress_bar],
+            verbose=0
         )
 
-    def sample(self, sample_size: int, batch_size: int, temperature: float = 1.0) -> pd.DataFrame:
+        self.metrics_df = metrics_logger.get_dataframe()
+
+    def sample(self, sample_size: int, batch_size: int) -> pd.DataFrame:
         """
         Sample an event log from a trained DP-Bi-LSTM Model. The model must be trained before sampling. The sampling
         process can be controlled by the temperature parameter, which controls the randomness of sampling process.
@@ -193,7 +271,7 @@ class EventLogDpLstm:
 
         Parameters:
         sample_size (int): Number of traces to sample.
-        temperature (float): Temperature for sampling the attribute information (default is 1.0).
+        batch_size (int): Number of traces to sample in a batch.
 
         Returns:
         pd.DataFrame: DataFrame containing the sampled event log.
@@ -205,14 +283,12 @@ class EventLogDpLstm:
             print("Sampling Event Log with:", sample_size - len_synthetic_event_log, "traces left")
             sample_size_new = sample_size - len_synthetic_event_log
 
-            synthetic_event_log_sentences = sample_batch_new(
+            synthetic_event_log_sentences = sample_batch(
                 sample_size_new,
                 self.tokenizer,
                 self.max_sequence_len,
                 self.model,
-                self.event_attribute_model,
                 batch_size,
-                temperature,
                 self.num_cols,
                 self.column_list
             )
@@ -239,6 +315,8 @@ class EventLogDpLstm:
         self.model.save(os.path.join(path, "model.keras"))
 
         self.event_attribute_model.to_excel(os.path.join(path, "event_attribute_model.xlsx"), index=False)
+
+        self.metrics_df.to_excel(os.path.join(path, "training_metrics.xlsx"), index=False)
 
         with open(os.path.join(path, "tokenizer.pkl"), "wb") as handle:
             pickle.dump(self.tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
