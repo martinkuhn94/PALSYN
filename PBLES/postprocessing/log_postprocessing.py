@@ -4,6 +4,42 @@ import sys
 import numpy as np
 import pandas as pd
 from scipy.stats import norm
+import xml.etree.ElementTree as ET
+
+
+def clean_xes_file(xml_file, output_file):
+    """
+    Clean XES file by removing empty strings, NA values, and HTML-encoded NA strings.
+
+    Parameters:
+    xml_file (str): Path to input XES file
+    output_file (str): Path to output cleaned XES file
+    """
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    ET.register_namespace('', 'http://www.xes-standard.org/')
+    ns = {'': 'http://www.xes-standard.org/'}
+
+    # List of values to remove (fixed string concatenation)
+    na_values = [
+        '', 'NA', 'nan', 'NaN', 'null', 'NULL', '<NA>', 'NaT',
+        '&lt;NA&gt;', '&lt;nan&gt;', '&lt;NaN&gt;', '&lt;null&gt;',
+        '&lt;NULL&gt;', '&lt;NA&gt;', '&lt;NaT&gt;'
+    ]
+
+    for event in root.findall('.//event', ns):
+        # Create a list of elements to remove (can't modify while iterating)
+        to_remove = []
+        for elem in event:
+            value = elem.get('value', '').strip()
+            if value in na_values or value.upper() in [x.upper() for x in na_values]:
+                to_remove.append(elem)
+
+        # Remove the identified elements
+        for elem in to_remove:
+            event.remove(elem)
+
+    tree.write(output_file, encoding='utf-8', xml_declaration=True)
 
 
 def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch) -> pd.DataFrame:
@@ -22,11 +58,7 @@ def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_
     """
     print("Creating DF-Event Log from synthetic Data")
     transformed_sentences = transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch)
-
-    # Create DataFrame from transformed sentences
     df = create_dataframe_from_sentences(transformed_sentences, dict_dtypes)
-
-    # Clean and reorder DataFrame
     df = reorder_and_sort_df(df)
 
     return df
@@ -74,18 +106,15 @@ def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
     Returns:
     datetime.datetime: Start epoch as a datetime object.
     """
-    dp_mean, dp_std, min_bound, max_bound = start_epoch  # Unpack the list
+    dp_mean, dp_std, min_bound, max_bound = start_epoch
     epoch_dist = norm(loc=dp_mean, scale=dp_std)
 
     while True:
-        # Generate a value from the normal distribution
         epoch_value = epoch_dist.rvs(1)[0]
 
-        # Check if the value is within bounds
         if min_bound <= epoch_value <= max_bound:
             break
 
-    # Convert to datetime and return
     epoch = datetime.datetime.fromtimestamp(epoch_value)
     return epoch
 
@@ -161,6 +190,7 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
         generation_input = cluster_dict[value]
         dist = norm(loc=generation_input[2], scale=generation_input[3])
         value = abs(dist.rvs(1)[0])
+        value = round(value)
         epoch = epoch + datetime.timedelta(seconds=value)
         timestamp_string = epoch.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
         if timestamp_string == "NaT":
@@ -211,7 +241,6 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
     for case in parsed_data:
         df = pd.concat([df, pd.DataFrame(case)], ignore_index=True)
 
-    # Access the nested dictionary structure
     dtype_mapping = dict_dtypes['attribute_datatypes']
 
     for key, value in dtype_mapping.items():
@@ -231,9 +260,6 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
         lambda x: x.ffill() if pd.isna(x.iloc[0]) else x
     )
 
-    # Replace all nan values with empty string
-    df = df.fillna("")
-    # replace "nan" with ""
     df = df.replace("nan", "")
 
     return df
@@ -251,10 +277,13 @@ def convert_column_dtype(column: pd.Series, dtype: str) -> pd.Series:
     Returns:
     pd.Series: Converted column.
     """
-    if dtype == "int":
-        # round each element in column on next integer
-        column = column.round()
-        return column.astype(int)
+    if dtype == "int64":
+        # Convert empty strings and non-numeric values to NaN first
+        cleaned_column = column.replace(['', 'nan', 'NaN', 'NULL', 'null'], np.nan)
+        # Convert to numeric, forcing non-numeric values to NaN
+        numeric_column = pd.to_numeric(cleaned_column, errors='coerce')
+        # Convert to nullable integer
+        return numeric_column.astype('Int64')
     elif dtype == "float" or dtype == "float64":
         return column.astype(float) if column.name != "time:timestamp" else column.astype(str)
     elif dtype == "boolean":

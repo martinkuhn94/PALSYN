@@ -35,33 +35,27 @@ def tokenize_log(event_log_sentences: list, variant: str, steps: int = 1) -> tup
     tokenizer.fit_on_texts(event_log_sentences)
     total_words = len(tokenizer.word_index) + 1
 
-    # Print the number of unique tokens
     print(f"Number of unique tokens: {total_words - 1}")
 
     input_sequences = []
     ys = []
 
-    # Generate sequences and their corresponding next steps
     for line in event_log_sentences:
         token_list = tokenizer.texts_to_sequences([line])[0]
-        for i in range(steps, len(token_list), steps):  # Create progressively longer sequences
-            # Take progressively longer context
-            n_gram_sequence = token_list[:i]  # Context includes the first `i` tokens
+        for i in range(steps, len(token_list), steps):
+            n_gram_sequence = token_list[:i]
             input_sequences.append(n_gram_sequence)
 
-            # Collect the next `steps` tokens as targets
             next_steps = token_list[i : i + steps]
-            next_steps += [0] * (steps - len(next_steps))  # Pad targets if fewer than `steps` remain
+            next_steps += [0] * (steps - len(next_steps))
             ys.append(next_steps)
 
-    # Pad the input sequences after generating target steps
     max_sequence_len = max(len(x) for x in input_sequences)
     input_sequences = np.array(pad_sequences(input_sequences, maxlen=max_sequence_len, padding="pre"))
 
-    xs = input_sequences  # Properly padded input sequences
+    xs = input_sequences
     ys = np.array(ys)
 
-    # Print number of input sequences
     print(f"Number of input sequences: {len(xs)}")
     print(f"Sequence Length: {max_sequence_len}")
 
