@@ -7,7 +7,7 @@ pbles_model = EventLogDpLstm()
 pbles_model.load("models/Bi-LSTM_Road_Fines_u=32_e=inf")
 
 # Sample
-event_log = pbles_model.sample(sample_size=1000, batch_size=50)
+event_log = pbles_model.sample(sample_size=5600, batch_size=100)
 event_log_xes = pm4py.convert_to_event_log(event_log)
 
 # Save as XES File

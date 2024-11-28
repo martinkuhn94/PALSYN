@@ -134,6 +134,7 @@ class EventLogDpLstm:
             num_attention_heads=4,  # Number of heads for multi-head attention
     ):
         # Initialization as before
+        self.modified_column_list = None
         self.metrics_df = None
         self.dict_dtypes = None
         self.cluster_dict = None
@@ -166,7 +167,10 @@ class EventLogDpLstm:
         self.l2_norm_clip = l2_norm_clip
         self.num_examples = None
 
-    def fit(self, input_data: pd.DataFrame) -> None:
+    # Split the fit function into two parts: initialize_model and train
+
+    def initialize_model(self, input_data: pd.DataFrame) -> None:
+        # Do the preprocessing and model setup only once
         (
             self.event_log_sentences,
             self.cluster_dict,
@@ -185,6 +189,7 @@ class EventLogDpLstm:
             self.event_log_sentences, variant="attributes", steps=self.num_cols
         )
 
+        # Build model architecture
         inputs = Input(shape=(self.max_sequence_len,))
         embedding_layer = Embedding(
             self.total_words, self.embedding_output_dims, input_length=self.max_sequence_len
@@ -210,12 +215,12 @@ class EventLogDpLstm:
         x = Dropout(self.dropout)(x)
 
         outputs = []
-        modified_column_list = []
+        self.modified_column_list = []
         for column in self.column_list:
-            modified_column_list.append(column.replace(":", "_").replace(" ", "_"))
+            self.modified_column_list.append(column.replace(":", "_").replace(" ", "_"))
 
         for step in range(self.num_cols):
-            output = Dense(self.total_words, activation="softmax", name=f"{modified_column_list[step]}")(x)
+            output = Dense(self.total_words, activation="softmax", name=f"{self.modified_column_list[step]}")(x)
             outputs.append(output)
 
         # Differentially Private Optimizer
@@ -228,16 +233,17 @@ class EventLogDpLstm:
 
         self.model = Model(inputs=inputs, outputs=outputs)
         self.model.compile(
-            loss=["sparse_categorical_crossentropy"] * self.num_cols,  # Loss for each step
+            loss=["sparse_categorical_crossentropy"] * self.num_cols,
             optimizer=dp_optimizer,
             metrics=["accuracy"],
         )
 
-        # Prepare multi-output labels
+    def train(self, epochs: int) -> None:
+        # Training function that can be called multiple times
         y_outputs = [self.ys[:, step] for step in range(self.num_cols)]
 
         early_stopping = EarlyStopping(
-            monitor=f"{modified_column_list[0]}_accuracy",
+            monitor=f"{self.modified_column_list[0]}_accuracy",
             mode="max",
             verbose=0,
             patience=7,
@@ -247,15 +253,13 @@ class EventLogDpLstm:
             start_from_epoch=5
         )
 
-        # Create metrics logger with column list
         metrics_logger = MetricsLogger(num_cols=self.num_cols, column_list=self.column_list)
         custom_progress_bar = CustomProgressBar()
 
-        # Fit the model with both callbacks
         self.model.fit(
             self.xs,
             y_outputs,
-            epochs=self.epochs,
+            epochs=epochs,
             batch_size=self.batch_size,
             callbacks=[early_stopping, metrics_logger, custom_progress_bar],
             verbose=0
@@ -263,6 +267,11 @@ class EventLogDpLstm:
 
         self.metrics_df = metrics_logger.get_dataframe()
 
+    def fit(self, input_data: pd.DataFrame) -> None:
+        # Keep original fit function for backward compatibility
+        self.initialize_model(input_data)
+        self.train(self.epochs)
+        
     def sample(self, sample_size: int, batch_size: int) -> pd.DataFrame:
         """
         Sample an event log from a trained DP-Bi-LSTM Model. The model must be trained before sampling. The sampling
