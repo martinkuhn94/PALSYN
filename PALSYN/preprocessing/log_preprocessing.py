@@ -431,26 +431,50 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     if 'case:concept:name' in column_list:
         column_list.remove('case:concept:name')
 
-    for i, trace in enumerate(df["case:concept:name"].unique(), start=1):
-        print(f"\rProcessing trace {i} of {total_traces}", end="", flush=True)
-        df_temp = df[df["case:concept:name"] == trace]
-        df_temp = df_temp.drop(columns=['case:concept:name'])
+    # Pre-filter global attributes once
+    global_attributes = [
+        col for col in df.columns
+        if col.startswith("case:") and col != "case:concept:name"
+    ]
+
+    # Pre-calculate total traces
+    total_traces = df['case:concept:name'].nunique()
+    event_log_sentence_list = []
+
+    # Use groupby instead of filtering for each trace
+    for i, (_, trace_group) in enumerate(df.groupby("case:concept:name"), 1):
+        progress = min(99.9, (i / total_traces) * 100)
+        if i % 100 == 0:  # Update progress less frequently
+            print(f"\rProcessing traces: {progress:.1f}%", end="", flush=True)
+
+        # Initialize trace sentence
         trace_sentence_list = [START_TOKEN] * num_cols
 
-        for global_attribute in df_temp:
-            if global_attribute.startswith("case:") and global_attribute != "case:concept:name":
-                trace_sentence_list.append(global_attribute + "==" + str(df_temp[global_attribute].iloc[0]))
+        # Handle global attributes (case: attributes)
+        trace_sentence_list.extend([
+            f"{attr}=={str(trace_group[attr].iloc[0])}"
+            for attr in global_attributes
+        ])
 
-        for row in df_temp.iterrows():
-            concept_name = row[1]["concept:name"]
-            for col in df_temp.columns:
-                trace_sentence_list.append(concept_name + "==" + col + "==" + str(row[1][col]) if str(
-                    row[1][col]) != "nan" else concept_name + "==" + col + "==" + "nan")
+        # Process trace events - drop case:concept:name once
+        trace_data = trace_group.drop(columns=['case:concept:name'])
+        concept_names = trace_data["concept:name"].values
+
+        # Process each event in the trace
+        for idx, row in enumerate(trace_data.values):
+            concept_name = concept_names[idx]
+            trace_sentence_list.extend([
+                f"{concept_name}=={col}=={str(val) if pd.notna(val) else 'nan'}"
+                for col, val in zip(trace_data.columns, row)
+            ])
 
         trace_sentence_list.extend([END_TOKEN] * num_cols)
         event_log_sentence_list.append(trace_sentence_list)
 
-    print()
+    # Print 100% at completion with carriage return
+    print("\rProcessing traces: 100.0%", end="", flush=True)
+    print()  # New line after completion
+
     return (
         event_log_sentence_list,
         cluster_dict,
