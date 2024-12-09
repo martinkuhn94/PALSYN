@@ -3,7 +3,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 import numpy as np
 
 
-def tokenize_log(event_log_sentences: list, variant: str, steps: int = 1) -> tuple:
+def tokenize_log(event_log_sentences: list, steps: int = 1) -> tuple:
     """
     Tokenize event log sentences based on the specified variant ('control-flow' or 'attributes') and
     predict the next `steps` tokens.
@@ -23,14 +23,6 @@ def tokenize_log(event_log_sentences: list, variant: str, steps: int = 1) -> tup
     if not isinstance(event_log_sentences, list):
         raise ValueError("event_log_sentences must be a list")
 
-    if variant == "control-flow":
-        event_log_sentences = [
-            [word for word in sentence if word.startswith("concept:name") or word in ["START==START", "END==END"]]
-            for sentence in event_log_sentences
-        ]
-    elif variant != "attributes":
-        raise ValueError("Variant not found. Please choose between 'control-flow' and 'attributes'")
-
     tokenizer = Tokenizer(lower=False)
     tokenizer.fit_on_texts(event_log_sentences)
     total_words = len(tokenizer.word_index) + 1
@@ -46,7 +38,7 @@ def tokenize_log(event_log_sentences: list, variant: str, steps: int = 1) -> tup
             n_gram_sequence = token_list[:i]
             input_sequences.append(n_gram_sequence)
 
-            next_steps = token_list[i : i + steps]
+            next_steps = token_list[i: i + steps]
             next_steps += [0] * (steps - len(next_steps))
             ys.append(next_steps)
 

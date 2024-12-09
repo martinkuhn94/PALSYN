@@ -1,10 +1,24 @@
-import sys
 import time
 import random
 
 import numpy as np
 from tensorflow.keras import backend as K
 from keras.utils import pad_sequences
+from PALSYN.preprocessing.log_preprocessing import START_TOKEN, END_TOKEN
+
+
+def clean_sequence(sequence: list[str], max_length: int) -> list[str]:
+    if len(sequence) >= max_length:
+        return []
+    trace = [START_TOKEN]
+    for word in sequence:
+        if word and word not in {START_TOKEN, END_TOKEN}:
+            if word.startswith("case:"):
+                trace.append(word)
+            else:
+                trace.append("==".join(word.split("==")[1:]))
+
+    return trace
 
 
 def sample_batch(
@@ -21,14 +35,10 @@ def sample_batch(
     """
     start_time = time.time()
 
-    # Determine the effective batch size
     effective_batch_size = max(batch_size, sample_size)
-
     synthetic_event_log_sentences = []
     index_word = {index: word for word, index in tokenizer.word_index.items()}
-
-    # Generate one full batch
-    batch_seed_texts = [["START==START"] * num_cols for _ in range(effective_batch_size)]
+    batch_seed_texts = [[START_TOKEN] * num_cols for _ in range(effective_batch_size)]
     batch_active = np.ones(effective_batch_size, dtype=bool)
 
     while np.any(batch_active):
@@ -74,11 +84,11 @@ def sample_batch(
                 filtered_probabilities = np.array(filtered_probabilities) / np.sum(filtered_probabilities)
 
                 next_word_index = np.random.choice(valid_tokens, p=filtered_probabilities)
-                next_word = index_word.get(next_word_index, "END==concept:name==END")
+                next_word = index_word.get(next_word_index, END_TOKEN)
 
                 if column == "concept:name":
                     latest_concept_name = next_word.split("==")[0]
-                    if latest_concept_name == "END" or next_word == "END==concept:name==END":
+                    if latest_concept_name == "END" or next_word == END_TOKEN:
                         batch_active[i] = False
                         break
 
@@ -93,25 +103,11 @@ def sample_batch(
     K.clear_session()
 
     # Clean event prefixes and exclude overly long sequences
-    clean_synthetic_event_log_sentences = []
-    for sentence in synthetic_event_log_sentences:
-        if len(sentence) >= (max_sequence_len * 1.5):
-            continue
-
-        trace = ["START==START"]
-        for word in sentence:
-            if not word:
-                continue
-            if word == "START==START" or word == "END==concept:name==END":
-                continue
-            elif word.startswith("case:"):
-                trace.append(word)
-            else:
-                word_part_one = word.split("==")[1]
-                word_part_two = word.split("==")[2]
-                trace.append(word_part_one + "==" + word_part_two)
-        trace.append("END==END")
-        clean_synthetic_event_log_sentences.append(trace)
+    clean_synthetic_event_log_sentences = [
+        clean_sequence(sentence, round(max_sequence_len * 1.5))
+        for sentence in synthetic_event_log_sentences
+        if len(sentence) < round(max_sequence_len * 1.5)
+    ]
 
     # Randomly sample the required number of sequences
     if len(clean_synthetic_event_log_sentences) > sample_size:

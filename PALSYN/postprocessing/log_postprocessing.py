@@ -6,6 +6,14 @@ import pandas as pd
 from scipy.stats import norm
 import xml.etree.ElementTree as ET
 
+XES_NAMESPACE = 'http://www.xes-standard.org/'
+NS = {'': XES_NAMESPACE}
+NA_VALUES = {
+    '', 'NA', 'nan', 'NaN', 'null', 'NULL', '<NA>', 'NaT',
+    '&lt;NA&gt;', '&lt;nan&gt;', '&lt;NaN&gt;', '&lt;null&gt;',
+    '&lt;NULL&gt;', '&lt;NA&gt;', '&lt;NaT&gt;'
+}
+
 
 def clean_xes_file(xml_file, output_file):
     """
@@ -17,25 +25,15 @@ def clean_xes_file(xml_file, output_file):
     """
     tree = ET.parse(xml_file)
     root = tree.getroot()
-    ET.register_namespace('', 'http://www.xes-standard.org/')
-    ns = {'': 'http://www.xes-standard.org/'}
+    ET.register_namespace('', XES_NAMESPACE)
 
-    # List of values to remove (fixed string concatenation)
-    na_values = [
-        '', 'NA', 'nan', 'NaN', 'null', 'NULL', '<NA>', 'NaT',
-        '&lt;NA&gt;', '&lt;nan&gt;', '&lt;NaN&gt;', '&lt;null&gt;',
-        '&lt;NULL&gt;', '&lt;NA&gt;', '&lt;NaT&gt;'
-    ]
-
-    for event in root.findall('.//event', ns):
-        # Create a list of elements to remove (can't modify while iterating)
+    for event in root.findall('.//event', NS):
         to_remove = []
         for elem in event:
             value = elem.get('value', '').strip()
-            if value in na_values or value.upper() in [x.upper() for x in na_values]:
+            if value.upper() in {x.upper() for x in NA_VALUES}:
                 to_remove.append(elem)
 
-        # Remove the identified elements
         for elem in to_remove:
             event.remove(elem)
 
@@ -99,15 +97,13 @@ def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
     then checked against the min and max bounds. If the value is out of bounds, it is regenerated.
 
     Parameters:
-    start_epoch (list[float]): List containing:
-                               [mean, standard deviation, min bound, max bound]
-                               for the normal distribution used to generate the start epoch.
+    start_epoch (list[float]): List containing: [mean, standard deviation, min bound, max bound]
 
     Returns:
     datetime.datetime: Start epoch as a datetime object.
     """
-    dp_mean, dp_std, min_bound, max_bound = start_epoch
-    epoch_dist = norm(loc=dp_mean, scale=dp_std)
+    mean, std, min_bound, max_bound = start_epoch
+    epoch_dist = norm(loc=mean, scale=std)
 
     while True:
         epoch_value = epoch_dist.rvs(1)[0]
@@ -160,14 +156,14 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
     Process a word in the sentence and update the temporary sentence list.
 
     Parameters:
-    word: The word to process.
-    temp_sentence: The temporary sentence list to update.
-    dict_dtypes: Dictionary of data types from YAML (nested under 'attribute_datatypes').
-    cluster_dict: Dictionary of cluster information.
-    epoch: Current epoch time.
+    word: The word to process
+    temp_sentence: The temporary sentence list to update
+    dict_dtypes: Dictionary of data types from YAML
+    cluster_dict: Dictionary of cluster information
+    epoch: Current epoch time
 
     Returns:
-    list: Updated temporary sentence list.
+    tuple: (Updated temporary sentence list, Updated epoch)
     """
     parts = word.split("==")
     if len(parts) == 2:
@@ -267,30 +263,27 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
 
 def convert_column_dtype(column: pd.Series, dtype: str) -> pd.Series:
     """
-    Convert the data type of a column in the DataFrame based on the specified dtype. The conversion is done using the
-    astype method of the pandas Series.
+    Convert a pandas Series to specified dtype with proper NA handling.
 
     Parameters:
-    column: The column to convert.
-    dtype: The data type to convert the column to.
+    column (pd.Series): Column to convert
+    dtype (str): Target data type
 
     Returns:
-    pd.Series: Converted column.
+    pd.Series: Converted column
     """
-    if dtype == "int64":
-        # Convert empty strings and non-numeric values to NaN first
-        cleaned_column = column.replace(['', 'nan', 'NaN', 'NULL', 'null'], np.nan)
-        # Convert to numeric, forcing non-numeric values to NaN
-        numeric_column = pd.to_numeric(cleaned_column, errors='coerce')
-        # Convert to nullable integer
-        return numeric_column.astype('Int64')
-    elif dtype == "float" or dtype == "float64":
-        return column.astype(float) if column.name != "time:timestamp" else column.astype(str)
-    elif dtype == "boolean":
-        return column.astype(bool)
-    elif dtype == "date":
-        return column.astype(str)
-    elif dtype == "string" or dtype == "object":
-        return column.astype(str)
+    type_converters = {
+        "int64": lambda col: pd.to_numeric(
+            col.replace(['', 'nan', 'NaN', 'NULL', 'null'], np.nan),
+            errors='coerce'
+        ).astype('Int64'),
+        "float": lambda col: col.astype(float) if col.name != "time:timestamp" else col.astype(str),
+        "float64": lambda col: col.astype(float) if col.name != "time:timestamp" else col.astype(str),
+        "boolean": lambda col: col.astype(bool),
+        "date": lambda col: col.astype(str),
+        "string": lambda col: col.astype(str),
+        "object": lambda col: col.astype(str)
+    }
 
-    return column
+    converter = type_converters.get(dtype)
+    return converter(column) if converter else column
