@@ -8,7 +8,6 @@ max_clusters: 15
 method: Bi-LSTM
 noise_multiplier: 0
 num_examples: 17756
-trace_quantile: 0.9
+trace_quantile: 0.8
 units_per_layer:
 - 32
-- 16

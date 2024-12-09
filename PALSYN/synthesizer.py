@@ -4,6 +4,7 @@ import yaml
 
 import pandas as pd
 import tensorflow as tf
+from tensorflow.keras import mixed_precision
 from keras import Input, Model
 from keras.callbacks import EarlyStopping
 from keras.layers import (
@@ -124,9 +125,12 @@ class DPEventLogSynthesizer:
             self.event_log_sentences, steps=self.num_cols
         )
 
-        inputs = Input(shape=(self.max_sequence_len,))
+        inputs = Input(shape=(self.max_sequence_len,), dtype='int32')
         embedding_layer = Embedding(
-            self.total_words, self.embedding_output_dims, input_length=self.max_sequence_len
+            self.total_words,
+            self.embedding_output_dims,
+            input_length=self.max_sequence_len,
+            embeddings_regularizer=tf.keras.regularizers.l2(1e-5)  # Add regularization
         )(inputs)
         x = Masking(mask_value=0)(embedding_layer)
 
