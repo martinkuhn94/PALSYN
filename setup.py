@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="PBLES",
-    version="0.0.2",
+    version="0.0.3",
     author="Martin Kuhn",
     author_email="martin.kuhn@dfki.de",
     description="Private Bi-LSTM Event Log Synthesizer (PBLES)",
@@ -18,7 +18,7 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
     ],
-    keywords="Event Log Synthetization, Differential Privacy, Bi-LSTM, Synthetic Data Generation",
+    keywords="Event Log Synthetization, Differential Privacy, Sequence Models, Synthetic Data Generation",
     install_requires=[
         "pandas==1.5.3",
         "numpy==1.23.5",
@@ -30,5 +30,5 @@ setup(
         "tensorflow_privacy==0.9.0",
         "openpyxl==3.1.2",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.9",
 )

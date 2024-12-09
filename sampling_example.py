@@ -1,13 +1,13 @@
 import pm4py
-from PBLES.event_log_dp_lstm import EventLogDpLstm
-from PBLES.postprocessing.log_postprocessing import clean_xes_file
+from PALSYN.synthesizer import DPEventLogSynthesizer
+from PALSYN.postprocessing.log_postprocessing import clean_xes_file
 
 # Load Model
-pbles_model = EventLogDpLstm()
-pbles_model.load("models/Bi-LSTM_Road_Fines_u=32_e=inf")
+palsyn_model = DPEventLogSynthesizer()
+palsyn_model.load("models/Bi-LSTM_Road_Fines_u=32_e=inf")
 
 # Sample
-event_log = pbles_model.sample(sample_size=5600, batch_size=100)
+event_log = palsyn_model.sample(sample_size=5600, batch_size=100)
 event_log_xes = pm4py.convert_to_event_log(event_log)
 
 # Save as XES File
