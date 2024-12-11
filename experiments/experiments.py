@@ -23,14 +23,14 @@ event_log_train = pm4py.read_xes(real_event_log_filename)
 
 event_log_name = "Sepsis_Case"
 method_array = ["LSTM"]
-num_epochs = 5  # Total number of epochs to train
+num_epochs = 10  # Total number of epochs to train
 breakpoint_interval = 5  # Save and evaluate model every 10 epochs
 units_per_layer_array = [32]
-epsilon_array = [None]
+epsilon_array = [None, 1, 0.1]
 
 # Sampling
-sample_size = 1050
-batch_size = 50
+sample_size = 10000
+batch_size = 200
 
 # Dataframe result array
 df_result_array = []
