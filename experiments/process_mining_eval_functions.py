@@ -1,3 +1,4 @@
+import numpy as np
 import pm4py
 import pandas as pd
 from pm4py.statistics.variants.log import get as variants_module
@@ -38,6 +39,22 @@ def calculate_trace_length_distribution(log):
     count_data.index = pd.to_numeric(count_data.index)
 
     return count_data
+
+
+def calc_hellinger(dist1, dist2):
+    # Align distributions
+    all_indices = sorted(set(dist1.index) | set(dist2.index))
+    dist1_aligned = pd.Series(0, index=all_indices)
+    dist2_aligned = pd.Series(0, index=all_indices)
+
+    dist1_aligned[dist1.index] = dist1
+    dist2_aligned[dist2.index] = dist2
+
+    # Convert to probabilities
+    p1 = dist1_aligned / dist1_aligned.sum()
+    p2 = dist2_aligned / dist2_aligned.sum()
+
+    return np.sqrt(np.sum((np.sqrt(p1.values) - np.sqrt(p2.values)) ** 2)) / np.sqrt(2)
 
 
 def calculate_throughput_time(log):

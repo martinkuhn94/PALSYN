@@ -8,7 +8,7 @@ from PALSYN.synthesizer import DPEventLogSynthesizer
 from sdmetrics.single_column import TVComplement, KSComplement
 from PALSYN.postprocessing.log_postprocessing import clean_xes_file
 from process_mining_eval_functions import (calculate_throughput_time, \
-    calculate_trace_length_distribution)
+                                           calculate_trace_length_distribution, calc_hellinger)
 
 
 # To run this file you need to install the following packages:
@@ -189,6 +189,10 @@ for method in method_array:
                 tv_statistic = TVComplement.compute(real_data=trace_length_real, synthetic_data=trace_length_synthetic)
                 results["tv_statistic_trace_length_distribution"] = tv_statistic
                 print("TV Statistic for Trace Length Distribution: ", tv_statistic)
+
+                hellinger_distance = calc_hellinger(trace_length_real, trace_length_synthetic)
+                results["hellinger_distance_trace_length_distribution"] = hellinger_distance
+                print("Hellinger Distance for Trace Length Distribution: ", hellinger_distance)
 
                 # Calculate throughput time distribution
                 throughput_time_real = calculate_throughput_time(real_event_log)
