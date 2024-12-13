@@ -5,7 +5,7 @@ import os
 import pandas as pd
 import pm4py
 from PALSYN.synthesizer import DPEventLogSynthesizer
-from sdmetrics.single_column import TVComplement, KSComplement
+from sdmetrics.single_column import KSComplement
 from PALSYN.postprocessing.log_postprocessing import clean_xes_file
 from process_mining_eval_functions import (calculate_throughput_time, \
                                            calculate_trace_length_distribution, calc_hellinger)
@@ -23,14 +23,14 @@ event_log_train = pm4py.read_xes(real_event_log_filename)
 
 event_log_name = "Sepsis_Case"
 method_array = ["LSTM"]
-num_epochs = 10  # Total number of epochs to train
-breakpoint_interval = 5  # Save and evaluate model every 10 epochs
-units_per_layer_array = [32]
-epsilon_array = [None, 1, 0.1]
+num_epochs = 1  # Total number of epochs to train
+breakpoint_interval = 1  # Save and evaluate model every 10 epochs
+units_per_layer_array = [64]
+epsilon_array = [None]
 
 # Sampling
-sample_size = 10000
-batch_size = 200
+sample_size = 1000
+batch_size = 50
 
 # Dataframe result array
 df_result_array = []
@@ -148,7 +148,7 @@ for method in method_array:
 
                     data_real = df_real_categorical[col].dropna().astype(str)
                     data_synthetic = df_synthetic_categorical[col].dropna().astype(str)
-                    tv_statistic = TVComplement.compute(real_data=data_real, synthetic_data=data_synthetic)
+                    tv_statistic = 1 - calc_hellinger(data_real, data_synthetic)
                     print(f"{col} TV Statistic: {tv_statistic}", "Length Real: ", len(data_real),
                           "Length Synthetic: ", len(data_synthetic))
                     average_tv.append(tv_statistic)
@@ -179,20 +179,16 @@ for method in method_array:
                 # Calculate TV Statistic for events
                 data_real = df_real["concept:name"].dropna()
                 data_synthetic = df_synthetic["concept:name"].dropna()
-                tv_statistic = TVComplement.compute(real_data=data_real, synthetic_data=data_synthetic)
-                results["tv_statistic_event_distribution"] = tv_statistic
-                print("TV Statistic for Event Distribution: ", tv_statistic)
+                hellinger_distance_events = calc_hellinger(data_real, data_synthetic)
+                results["tv_statistic_event_distribution"] = (1 - hellinger_distance_events)
+                print("TV Statistic for Event Distribution: ", (1 - hellinger_distance_events))
 
                 # Calculate trace length distribution
                 trace_length_real = calculate_trace_length_distribution(real_event_log)
                 trace_length_synthetic = calculate_trace_length_distribution(synthetic_event_log)
-                tv_statistic = TVComplement.compute(real_data=trace_length_real, synthetic_data=trace_length_synthetic)
-                results["tv_statistic_trace_length_distribution"] = tv_statistic
-                print("TV Statistic for Trace Length Distribution: ", tv_statistic)
-
-                hellinger_distance = calc_hellinger(trace_length_real, trace_length_synthetic)
-                results["hellinger_distance_trace_length_distribution"] = hellinger_distance
-                print("Hellinger Distance for Trace Length Distribution: ", hellinger_distance)
+                hellinger_distance_trace = calc_hellinger(trace_length_real, trace_length_synthetic)
+                results["hellinger_distance_trace_length_distribution"] = (1 - hellinger_distance_trace)
+                print("Hellinger Distance for Trace Length Distribution: ", (1 - hellinger_distance_trace))
 
                 # Calculate throughput time distribution
                 throughput_time_real = calculate_throughput_time(real_event_log)
@@ -213,7 +209,7 @@ columns_to_average = [
     'average_ks',
     'average_tv',
     'tv_statistic_event_distribution',
-    'tv_statistic_trace_length_distribution',
+    'hellinger_distance_trace_length_distribution',
     'ks_statistic_throughput_time_distribution'
 ]
 
