@@ -41,18 +41,26 @@ def sample_batch(
     batch_seed_texts = [[START_TOKEN] * num_cols for _ in range(effective_batch_size)]
     batch_active = np.ones(effective_batch_size, dtype=bool)
 
+    # Progress tracking variables
+    total_sequences = effective_batch_size
+    completed_sequences = 0
+    last_percentage = 0
+
+    def update_progress():
+        nonlocal completed_sequences, last_percentage
+        completed_sequences += 1
+        current_percentage = int((completed_sequences / total_sequences) * 100)
+        if current_percentage > last_percentage:
+            progress_bar = "█" * (current_percentage // 2) + "░" * (50 - (current_percentage // 2))
+            print(f"\rProgress: |{progress_bar}| {current_percentage}% ", end="", flush=True)
+            last_percentage = current_percentage
+
     while np.any(batch_active):
-        # Prepare data for model prediction
         token_lists = [tokenizer.texts_to_sequences([seq])[0] for seq in batch_seed_texts]
         padded_token_lists = pad_sequences(token_lists, maxlen=max_sequence_len, padding="pre")
-
-        # Reset model states before each new batch prediction
         model.reset_states()
-
-        # Get predictions for all sequences in the batch
         predictions = model.predict(padded_token_lists, verbose=0)
 
-        # Update sequences and check for completion
         for i, (active, seq) in enumerate(zip(batch_active, batch_seed_texts)):
             if not active:
                 continue
@@ -61,10 +69,9 @@ def sample_batch(
             synth_row = []
 
             for prediction_output, column in zip(predictions, column_list):
-                prediction_output = prediction_output[i]  # Get predictions for current sequence
+                prediction_output = prediction_output[i]
                 prediction_output = prediction_output / np.sum(prediction_output)
 
-                # Filter valid tokens based on column and latest concept name
                 if latest_concept_name is None:
                     valid_tokens = [
                         index for index, word in index_word.items()
@@ -78,6 +85,7 @@ def sample_batch(
 
                 if len(valid_tokens) == 0:
                     batch_active[i] = False
+                    update_progress()
                     break
 
                 filtered_probabilities = [prediction_output[token] for token in valid_tokens]
@@ -90,6 +98,7 @@ def sample_batch(
                     latest_concept_name = next_word.split("==")[0]
                     if latest_concept_name == "END" or next_word == END_TOKEN:
                         batch_active[i] = False
+                        update_progress()
                         break
 
                 synth_row.append(next_word)
@@ -98,6 +107,7 @@ def sample_batch(
                 seq.extend(synth_row)
                 if len(seq) >= (max_sequence_len * 2):
                     batch_active[i] = False
+                    update_progress()
 
     synthetic_event_log_sentences.extend(batch_seed_texts)
     K.clear_session()

@@ -4,7 +4,6 @@ import yaml
 
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras import mixed_precision
 from keras import Input, Model
 from keras.callbacks import EarlyStopping
 from keras.layers import (
