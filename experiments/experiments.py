@@ -17,20 +17,20 @@ from process_mining_eval_functions import (calculate_throughput_time, \
 # pip install openpyxl
 
 # Read Event Log
-log_filename = "Sepsis_Cases_Event_Log.xes"
+log_filename = "Road_Traffic_Fine_Management_Process_short.xes"
 real_event_log_filename = os.path.join(os.path.dirname(os.path.dirname(__file__)), "example_logs", log_filename)
 event_log_train = pm4py.read_xes(real_event_log_filename)
 
 event_log_name = "Sepsis_Case"
 method_array = ["LSTM"]
-num_epochs = 1  # Total number of epochs to train
-breakpoint_interval = 1  # Save and evaluate model every 10 epochs
+num_epochs = 5  # Total number of epochs to train
+breakpoint_interval = 5  # Save and evaluate model every 10 epochs
 units_per_layer_array = [64]
 epsilon_array = [None]
 
 # Sampling
-sample_size = 1000
-batch_size = 50
+sample_size = 200
+batch_size = 10
 
 # Dataframe result array
 df_result_array = []
@@ -186,7 +186,7 @@ for method in method_array:
                 # Calculate trace length distribution
                 trace_length_real = calculate_trace_length_distribution(real_event_log)
                 trace_length_synthetic = calculate_trace_length_distribution(synthetic_event_log)
-                hellinger_distance_trace = calc_hellinger(trace_length_real, trace_length_synthetic)
+                hellinger_distance_trace = calc_hellinger(trace_length_real, trace_length_synthetic, input_type="distribution")
                 results["hellinger_distance_trace_length_distribution"] = (1 - hellinger_distance_trace)
                 print("Hellinger Distance for Trace Length Distribution: ", (1 - hellinger_distance_trace))
 

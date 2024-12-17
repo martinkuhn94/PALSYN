@@ -35,13 +35,16 @@ def calculate_trace_length_distribution(log):
     count_data = count_data.value_counts()
     # Sort the series by the index
     count_data = count_data.sort_index()
+
+    print(count_data)
+
     # Make index numeric
-    count_data.index = pd.to_numeric(count_data.index)
+    #count_data.index = pd.to_numeric(count_data.index)
 
     return count_data
 
 
-def calc_hellinger(data1, data2):
+def calc_hellinger(real_data, synthetic_data, input_type = "column"):
     """
     Calculate Hellinger distance between two distributions or columns.
 
@@ -52,13 +55,12 @@ def calc_hellinger(data1, data2):
     Returns:
         float: Hellinger distance
     """
-    # Convert data to value counts if they're columns
-    if not isinstance(data1.index, pd.Index) or data1.index.dtype == 'int64':
-        dist1 = data1.value_counts()
-        dist2 = data2.value_counts()
+    if input_type == "column":
+        dist1 = real_data.value_counts()
+        dist2 = synthetic_data.value_counts()
     else:
-        dist1 = data1
-        dist2 = data2
+        dist1 = real_data
+        dist2 = synthetic_data
 
     # Align distributions
     all_indices = sorted(set(dist1.index) | set(dist2.index))
