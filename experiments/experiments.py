@@ -17,20 +17,20 @@ from process_mining_eval_functions import (calculate_throughput_time, \
 # pip install openpyxl
 
 # Read Event Log
-log_filename = "Sepsis_Cases_Event_Log.xes"
+log_filename = "Road_Traffic_Fine_Management_Process_Event_Log.xes"
 real_event_log_filename = os.path.join(os.path.dirname(os.path.dirname(__file__)), "example_logs", log_filename)
 event_log_train = pm4py.read_xes(real_event_log_filename)
 
-event_log_name = "Sepsis Case"
+event_log_name = "Road_Fines"
 method_array = ["LSTM"]
-num_epochs = 10  # Total number of epochs to train
-breakpoint_interval = 10  # Save and evaluate model every 10 epochs
+num_epochs = 1  # Total number of epochs to train
+breakpoint_interval = 1  # Save and evaluate model every 10 epochs
 units_per_layer_array = [32]
-epsilon_array = [None, 10, 1, 0.1]
+epsilon_array = [None]
 
 # Sampling
-sample_size = 1050
-batch_size = 50
+sample_size = 50000
+batch_size = 100
 
 # Dataframe result array
 df_result_array = []
@@ -52,7 +52,7 @@ for method in method_array:
                 batch_size=128,
                 max_clusters=10,
                 dropout=0.0,
-                trace_quantile=0.8,
+                trace_quantile=0.9,
                 epsilon=epsilon,
                 l2_norm_clip=1.0,
                 method=method,

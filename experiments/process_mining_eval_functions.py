@@ -194,16 +194,16 @@ def compare_logs(real_event_log, synthetic_event_log, threshold):
 
     # Calculate metrics for real event log
     for key, petri_net in petri_net_dict.items():
-        #alignments = pm4py.conformance_diagnostics_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
-        #prec = pm4py.precision_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
-        #gen = generalization_evaluator.apply(real_event_log, petri_net[0], petri_net[1], petri_net[2])
-        #fitness = calculate_fitness(alignments)
-        #simp = simplicity_evaluator.apply(petri_net[0])
+        alignments = pm4py.conformance_diagnostics_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
+        prec = pm4py.precision_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
+        gen = generalization_evaluator.apply(real_event_log, petri_net[0], petri_net[1], petri_net[2])
+        fitness = calculate_fitness(alignments)
+        simp = simplicity_evaluator.apply(petri_net[0])
 
-        results[f"real_{key}_Fitness"] = 0.618253902995422#fitness
-        results[f"real_{key}_Precision"] = 0.947637886897836#prec
-        results[f"real_{key}_Generalization"] = 0.841539660971075#gen
-        results[f"real_{key}_Simplicity"] = 0.433198380566802#simp
+        results[f"real_{key}_Fitness"] = fitness
+        results[f"real_{key}_Precision"] = prec
+        results[f"real_{key}_Generalization"] = gen
+        results[f"real_{key}_Simplicity"] = simp
 
     # Calculate metrics for synthetic event log
     for key, petri_net in petri_net_dict.items():

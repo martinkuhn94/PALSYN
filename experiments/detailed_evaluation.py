@@ -8,16 +8,16 @@ from process_mining_eval_functions import (calculate_throughput_time,
                                            compare_logs, save_descriptive_stats_to_yaml,
                                            create_process_metrics_df, calculate_petri_nets, save_petri_nets)
 
-log_name = "Sepsis_Case"
+log_name = "Road_Fines"
 epsilon = "e=0.1"
 
 # Read Event Log
-log_filename = "Sepsis_Cases_Event_Log.xes"
+log_filename = "Road_Traffic_Fine_Management_Process_Event_Log.xes"
 real_event_log_filename = os.path.join(os.path.dirname(os.path.dirname(__file__)), "example_logs",  log_filename)
 real_event_log = pm4py.read_xes(real_event_log_filename)
 
 # Read synthetic event log (assuming it's already generated)
-synthetic_log_filename = "LSTM_Sepsis Case_u=32_e=0.1_ep=10.xes"
+synthetic_log_filename = "LSTM_Road_Fine_u=32_e=0.1_ep=5.xes"
 synthetic_log_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "experiments", "synthetic_logs", synthetic_log_filename)
 synthetic_event_log = pm4py.read_xes(synthetic_log_path)
 

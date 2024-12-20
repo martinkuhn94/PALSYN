@@ -1,6 +1,7 @@
 import os
 import pickle
 import yaml
+import time
 
 import pandas as pd
 import tensorflow as tf
@@ -226,6 +227,8 @@ class DPEventLogSynthesizer:
         self.initialize_model(input_data)
         self.train(self.epochs)
 
+    import time  # Import the time module to measure execution time
+
     def sample(self, sample_size: int, batch_size: int) -> pd.DataFrame:
         """
         Sample an event log from a trained DP-Bi-LSTM Model. The model must be trained before sampling. The sampling
@@ -239,27 +242,51 @@ class DPEventLogSynthesizer:
         Returns:
         pd.DataFrame: DataFrame containing the sampled event log.
         """
+        start_time = time.time()  # Start the timer
         len_synthetic_event_log = 0
         synthetic_df = pd.DataFrame()
 
-        while len_synthetic_event_log < sample_size:
-            print("Sampling Event Log with:", sample_size - len_synthetic_event_log, "traces left")
-            sample_size_new = sample_size - len_synthetic_event_log
+        # Initialize the progress bar
+        last_percentage = 0
+        print(f"Sampling Event Log with: {sample_size} traces")
 
+        while len_synthetic_event_log < sample_size:
+            remaining_traces = sample_size - len_synthetic_event_log
+
+            # Calculate the current batch size (don't exceed remaining sample size)
+            current_batch_size = min(batch_size, remaining_traces)
+
+            # Generate a batch of synthetic event log sentences
             synthetic_event_log_sentences = sample_batch(
-                sample_size_new,
+                current_batch_size,  # Use current batch size instead of full sample size
                 self.tokenizer,
                 self.max_sequence_len,
                 self.model,
-                batch_size,
+                batch_size,  # Pass the fixed batch size here
                 self.num_cols,
                 self.column_list
             )
 
+            # Convert the generated sentences into a DataFrame
             df = generate_df(synthetic_event_log_sentences, self.cluster_dict, self.dict_dtypes, self.start_epoch)
             df.reset_index(drop=True, inplace=True)
+
+            # Append the new DataFrame to the synthetic event log
             synthetic_df = pd.concat([synthetic_df, df], axis=0, ignore_index=True)
+
+            # Update the number of unique traces added so far
             len_synthetic_event_log += df["case:concept:name"].nunique()
+
+            # Update and display progress
+            current_percentage = int((len_synthetic_event_log / sample_size) * 100)
+            if current_percentage > last_percentage:
+                progress_bar = "█" * (current_percentage // 2) + "░" * (50 - (current_percentage // 2))
+                print(f"\rProgress: |{progress_bar}| {current_percentage}% ", end="", flush=True)
+                last_percentage = current_percentage
+
+        # Print the total time taken
+        total_time = time.time() - start_time
+        print(f"\nTime taken for sampling: {total_time:.2f} seconds")
 
         return synthetic_df
 
