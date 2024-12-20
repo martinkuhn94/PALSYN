@@ -1,5 +1,3 @@
-import os
-
 import numpy as np
 import pm4py
 import pandas as pd
@@ -7,34 +5,6 @@ from pm4py.statistics.variants.log import get as variants_module
 from pm4py.algo.evaluation.earth_mover_distance import algorithm as emd_evaluator
 from pm4py.algo.evaluation.generalization import algorithm as generalization_evaluator
 from pm4py.algo.evaluation.simplicity import algorithm as simplicity_evaluator
-
-import yaml
-
-
-def save_descriptive_stats_to_yaml(df, output_file='descriptive_stats.yaml'):
-    # Get descriptive statistics
-    stats = df.describe(include='all')
-
-    # Convert DataFrame to dictionary
-    stats_dict = stats.to_dict()
-
-    # Convert numpy types to native Python types for YAML compatibility
-    def convert_numpy_types(obj):
-        if isinstance(obj, dict):
-            return {k: convert_numpy_types(v) for k, v in obj.items()}
-        elif isinstance(obj, (list, tuple)):
-            return [convert_numpy_types(x) for x in obj]
-        elif str(type(obj)).startswith("<class 'numpy"):
-            return obj.item()  # Convert numpy type to native Python type
-        return obj
-
-    stats_dict = convert_numpy_types(stats_dict)
-
-    # Save to YAML file
-    with open(output_file, 'w') as file:
-        yaml.dump(stats_dict, file, default_flow_style=False, sort_keys=False)
-
-    return stats_dict
 
 
 def event_distribution(log):
@@ -65,6 +35,11 @@ def calculate_trace_length_distribution(log):
     count_data = count_data.value_counts()
     # Sort the series by the index
     count_data = count_data.sort_index()
+
+    print(count_data)
+
+    # Make index numeric
+    #count_data.index = pd.to_numeric(count_data.index)
 
     return count_data
 
@@ -151,7 +126,7 @@ def calculate_earth_mover_distance(real_log, synthetic_log):
     synthetic_language = variants_module.get_language(synthetic_log)
     earth_mover_distance = emd_evaluator.apply(synthetic_language, real_language)
 
-    return 1 - earth_mover_distance
+    return earth_mover_distance
 
 
 def calculate_petri_nets(log, threshold):
@@ -163,13 +138,13 @@ def calculate_petri_nets(log, threshold):
     :return: A dictionary containing the discovered Petri nets, initial markings, and final markings.
     :rtype: dict
     """
-    #net_inductive, initial_marking_inductive, final_marking_inductive = pm4py.discover_petri_net_inductive(log)
+    net_inductive, initial_marking_inductive, final_marking_inductive = pm4py.discover_petri_net_inductive(log)
     net_heuristics, initial_marking_heuristics, final_marking_heuristics = \
         pm4py.discover_petri_net_heuristics(log, dependency_threshold=threshold)
     petri_net_list = [
-                      #[net_inductive, initial_marking_inductive, final_marking_inductive],
+                      [net_inductive, initial_marking_inductive, final_marking_inductive],
                       [net_heuristics, initial_marking_heuristics, final_marking_heuristics]]
-    petri_net_list_names = [#"Inductive",
+    petri_net_list_names = ["Inductive",
                             "Heuristics"]
     petri_net_dict = dict(zip(petri_net_list_names, petri_net_list))
     return petri_net_dict
@@ -194,16 +169,16 @@ def compare_logs(real_event_log, synthetic_event_log, threshold):
 
     # Calculate metrics for real event log
     for key, petri_net in petri_net_dict.items():
-        #alignments = pm4py.conformance_diagnostics_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
-        #prec = pm4py.precision_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
-        #gen = generalization_evaluator.apply(real_event_log, petri_net[0], petri_net[1], petri_net[2])
-        #fitness = calculate_fitness(alignments)
-        #simp = simplicity_evaluator.apply(petri_net[0])
+        alignments = pm4py.conformance_diagnostics_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
+        prec = pm4py.precision_alignments(real_event_log, petri_net[0], petri_net[1], petri_net[2])
+        gen = generalization_evaluator.apply(real_event_log, petri_net[0], petri_net[1], petri_net[2])
+        fitness = calculate_fitness(alignments)
+        simp = simplicity_evaluator.apply(petri_net[0])
 
-        results[f"real_{key}_Fitness"] = 0.618253902995422#fitness
-        results[f"real_{key}_Precision"] = 0.947637886897836#prec
-        results[f"real_{key}_Generalization"] = 0.841539660971075#gen
-        results[f"real_{key}_Simplicity"] = 0.433198380566802#simp
+        results[f"real_{key}_Fitness"] = fitness
+        results[f"real_{key}_Precision"] = prec
+        results[f"real_{key}_Generalization"] = gen
+        results[f"real_{key}_Simplicity"] = simp
 
     # Calculate metrics for synthetic event log
     for key, petri_net in petri_net_dict.items():
@@ -220,49 +195,3 @@ def compare_logs(real_event_log, synthetic_event_log, threshold):
         results[f"synthetic_{key}_Simplicity"] = simp
 
     return results
-
-
-def create_process_metrics_df(process_metrics):
-    # Separate real and synthetic metrics
-    real_metrics = {k.replace('real_', ''): v for k, v in process_metrics.items() if k.startswith('real_')}
-    synth_metrics = {k.replace('synthetic_', ''): v for k, v in process_metrics.items() if k.startswith('synthetic_')}
-
-    # Create DataFrame
-    df = pd.DataFrame({
-        'Real Log': real_metrics,
-        'Synthetic Log': synth_metrics
-    })
-
-    # Calculate differences
-    df['Absolute Difference'] = abs(df['Real Log'] - df['Synthetic Log'])
-
-    # Create transposed version
-    df_transposed = df.transpose()
-
-    # Add Log column to transposed DataFrame
-    df_transposed.insert(0, 'Log', ['Real', 'Synthetic', 'Differences'])
-
-    return df, df_transposed
-
-
-def save_petri_nets(petri_net_dict, eval_dir, prefix):
-    """Save Petri nets to files in both PNML and SVG formats.
-
-    :param petri_net_dict: Dictionary containing the Petri nets
-    :param eval_dir: Directory to save the Petri nets
-    :param prefix: Prefix for the filenames (e.g., 'real' or 'synthetic')
-    """
-    petri_nets_dir = os.path.join(eval_dir, 'petri_nets')
-    if not os.path.exists(petri_nets_dir):
-        os.makedirs(petri_nets_dir)
-
-    for algorithm, (net, initial_marking, final_marking) in petri_net_dict.items():
-        # Save PNML format
-        pnml_filename = f'{prefix}_{algorithm.lower()}.pnml'
-        pnml_path = os.path.join(petri_nets_dir, pnml_filename)
-        pm4py.write_pnml(net, initial_marking, final_marking, pnml_path)
-
-        # Save SVG format
-        svg_filename = f'{prefix}_{algorithm.lower()}.svg'
-        svg_path = os.path.join(petri_nets_dir, svg_filename)
-        pm4py.save_vis_petri_net(net, initial_marking, final_marking, svg_path)
