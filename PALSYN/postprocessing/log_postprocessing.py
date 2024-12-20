@@ -59,8 +59,6 @@ def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_
     df = create_dataframe_from_sentences(transformed_sentences, dict_dtypes)
     df = reorder_and_sort_df(df)
 
-    print("Finished creating DF-Event Log from synthetic Data")
-
     return df
 
 
@@ -203,61 +201,64 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
 
 def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.DataFrame:
     """
-    Create a DataFrame from transformed synthetic event log sentences with improved performance.
+    Create a DataFrame from the transformed synthetic event log sentences. The DataFrame is created by parsing the
+    transformed sentences and converting the data types of the columns based on the dict_dtypes dictionary. The
+    DataFrame is then sorted by 'case:concept:name' and 'time:timestamp' and the timestamps are interpolated and
+    forward-filled.
+
+    Parameters:
+    transformed_sentences: List of transformed synthetic event log sentences.
+    dict_dtypes: Dictionary of data types from YAML (nested under 'attribute_datatypes').
+
+    Returns:
+    pd.DataFrame: DataFrame created from the transformed synthetic event log sentences.
     """
-    # Pre-allocate a list with estimated size
-    all_events = []
+    parsed_data = []
+    removed_traces = 0
 
     for sentence in transformed_sentences:
-        # Extract case attributes once per sentence
-        case_dict = {
-            word.split("==")[0]: word.split("==")[1]
-            for word in sentence
-            if word.startswith("case:")
-        }
+        try:
+            case_dict = {
+                word.split("==")[0]: word.split("==")[1] for word in sentence if word.split("==")[0].startswith("case:")
+            }
+            event_indices = [i for i, s in enumerate(sentence) if s.startswith("concept:name")]
+            event_indices.pop(0)
+            events = np.split(sentence, event_indices)
+            event_dict_list = []
+            for event in events:
+                event_dict = {word.split("==")[0]: word.split("==")[1] for word in event}
+                event_dict.update(case_dict)
+                event_dict_list.append(event_dict)
+            parsed_data.append(event_dict_list)
+        except Exception:
+            removed_traces += 1
 
-        # Process events in a single pass
-        current_event = {}
-        for item in sentence:
-            if item.startswith("concept:name") and current_event:
-                event_copy = current_event.copy()
-                event_copy.update(case_dict)
-                all_events.append(event_copy)
-                current_event = {}
+    df = pd.DataFrame()
+    for case in parsed_data:
+        df = pd.concat([df, pd.DataFrame(case)], ignore_index=True)
 
-            key, value = item.split("==")
-            current_event[key] = value
-
-        # Don't forget the last event
-        if current_event:
-            current_event.update(case_dict)
-            all_events.append(current_event)
-
-    # Create DataFrame in one go
-    df = pd.DataFrame(all_events)
-
-    # Batch process data types
     dtype_mapping = dict_dtypes['attribute_datatypes']
+
     for key, value in dtype_mapping.items():
         if key in df.columns:
             df[key] = convert_column_dtype(df[key], value)
 
-    # Handle timestamps
     if "time:timestamp" not in df.columns:
-        df["time:timestamp"] = pd.Timestamp("2000-01-01").strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+        df["time:timestamp"] = [pd.Timestamp("2000-01-01").strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")] * len(df)
     else:
         df["time:timestamp"] = pd.to_datetime(df["time:timestamp"], errors="coerce")
 
-    # Sort and process timestamps in one operation
     df.sort_values(by=["case:concept:name", "time:timestamp"], inplace=True)
+    df["time:timestamp"] = df.groupby("case:concept:name")["time:timestamp"].transform(
+        lambda x: x.interpolate(method="ffill")
+    )
+    df["time:timestamp"] = df.groupby("case:concept:name")["time:timestamp"].transform(
+        lambda x: x.ffill() if pd.isna(x.iloc[0]) else x
+    )
 
-    # Optimize timestamp processing
-    groups = df.groupby("case:concept:name")["time:timestamp"]
-    df["time:timestamp"] = groups.transform(lambda x: x.interpolate(method="ffill"))
-    mask = groups.transform(lambda x: pd.isna(x.iloc[0]))
-    df.loc[mask, "time:timestamp"] = groups.transform(lambda x: x.ffill())[mask]
+    df = df.replace("nan", "")
 
-    return df.replace("nan", "")
+    return df
 
 
 def convert_column_dtype(column: pd.Series, dtype: str) -> pd.Series:
