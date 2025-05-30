@@ -6,7 +6,11 @@ PALSYN (Private Autoregressive Log Synthesizer) is a tool designed to generate p
 It addresses the privacy concerns by integrating differential privacy. 
 By doing so, it can make it easier for researches to share synthetic data with stakeholders, 
 facilitating AI and process mining research. However, legal compliance, such as adherence to GDPR or 
-other similar regulations, must be confirmed before sharing data, even if strong differential private guarantees are used.
+other similar regulations, must be confirmed before sharing data, even if strong differential private guarantees are used. 
+
+A detailed explanation of the algorithm and its workings can be found in our preprint:
+[Preprint: Private Autoregressive Log Synthesizer: Leveraging Differential Privacy for Generating Process-Oriented Synthetic Event Logs](https://www.researchsquare.com/article/rs-6565248/v1)
+
 
 ## Features
 
@@ -25,7 +29,7 @@ To install PALSYN by cloning the repository, follow these steps.
 Clone the repository:
 ```bash
 git clone https://github.com/martinkuhn94/PALSYN.git
-```
+
 
 Install the required dependencies:
 
