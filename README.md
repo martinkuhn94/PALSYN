@@ -9,7 +9,7 @@ facilitating AI and process mining research. However, legal compliance, such as 
 other similar regulations, must be confirmed before sharing data, even if strong differential private guarantees are used. 
 
 A detailed explanation of the algorithm and its workings can be found in our preprint:
-[Preprint: Private Autoregressive Log Synthesizer: Leveraging Differential Privacy for Generating Process-Oriented Synthetic Event Logs](https://www.researchsquare.com/article/rs-6565248/v1)
+[PALSYN: A Method for Synthetic Multi-Perspective Event Log Generation with Differential Private Guarantees](https://www.researchsquare.com/article/rs-6565248/v1)
 
 
 ## Features
