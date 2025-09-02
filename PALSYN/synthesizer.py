@@ -1,11 +1,14 @@
 import os
 import pickle
 import yaml
+import random
+from typing import List, Optional
 
+import numpy as np
 import pandas as pd
 import tensorflow as tf
 from keras import Input, Model
-from keras.callbacks import EarlyStopping
+from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers import (
     BatchNormalization,
     Bidirectional,
@@ -13,15 +16,30 @@ from keras.layers import (
     Dropout,
     Embedding,
     LSTM,
-    Masking,
     GRU,
     GlobalAveragePooling1D,
     SimpleRNN,
 )
 
-from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
-    DPKerasAdamOptimizer,
-)
+# TensorFlow Privacy optimizer import compatibility across versions
+try:
+    from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
+        DPKerasAdamOptimizer,
+    )
+except Exception:  # pragma: no cover - fallback for alternate tf-privacy versions
+    try:
+        from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras_vectorized import (
+            DPKerasAdamOptimizer,  # type: ignore
+        )
+    except Exception:
+        try:
+            from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
+                DPKerasAdamGaussianOptimizer as DPKerasAdamOptimizer,  # type: ignore
+            )
+        except Exception as exc:  # Re-raise with helpful message
+            raise ImportError(
+                "Unable to import a DP Keras Adam optimizer from tensorflow_privacy."
+            ) from exc
 
 from PALSYN.metrics_logger import MetricsLogger, CustomProgressBar
 from PALSYN.preprocessing.log_preprocessing import preprocess_event_log
@@ -55,14 +73,18 @@ class DPEventLogSynthesizer:
             self,
             embedding_output_dims: int = 16,
             method: str = "LSTM",
-            units_per_layer: list = None,
+            units_per_layer: Optional[List[int]] = None,
             epochs: int = 3,
             batch_size: int = 16,
             max_clusters: int = 10,
             dropout: float = 0.0,
             trace_quantile: float = 0.95,
             l2_norm_clip: float = 1.5,
-            epsilon: float = None,
+            epsilon: Optional[float] = None,
+            learning_rate: float = 0.001,
+            validation_split: float = 0.1,
+            checkpoint_path: Optional[str] = None,
+            seed: Optional[int] = None,
     ) -> None:
 
         self.modified_column_list = None
@@ -83,12 +105,35 @@ class DPEventLogSynthesizer:
         self.num_cols = None
         self.column_list = None
 
-        self.units_per_layer = units_per_layer
+        # Defaults and validations
+        self.units_per_layer = units_per_layer or [64, 64]
+        if not isinstance(self.units_per_layer, list) or not all(
+                isinstance(u, int) and u > 0 for u in self.units_per_layer
+        ):
+            raise ValueError("units_per_layer must be a list of positive ints")
+
+        allowed_methods = {"LSTM", "Bi-LSTM", "GRU", "Bi-GRU", "RNN", "Bi-RNN"}
+        if method not in allowed_methods:
+            raise ValueError(f"method must be one of {sorted(allowed_methods)}")
         self.method = method
         self.embedding_output_dims = embedding_output_dims
         self.epochs = epochs
         self.batch_size = batch_size
         self.dropout = dropout
+        self.learning_rate = learning_rate
+        self.validation_split = validation_split
+        self.checkpoint_path = checkpoint_path
+
+        # Reproducibility: always have and record a seed
+        if seed is None:
+            try:
+                seed = random.SystemRandom().randint(0, 2**31 - 1)
+            except Exception:
+                seed = int.from_bytes(os.urandom(4), 'little')
+        self.seed = seed
+        random.seed(self.seed)
+        np.random.seed(self.seed)
+        tf.random.set_seed(self.seed)
 
         self.noise_multiplier = None
         self.epsilon = epsilon
@@ -129,11 +174,12 @@ class DPEventLogSynthesizer:
             self.total_words,
             self.embedding_output_dims,
             input_length=self.max_sequence_len,
-            embeddings_regularizer=tf.keras.regularizers.l2(1e-5)  # Add regularization
+            embeddings_regularizer=tf.keras.regularizers.l2(1e-5),
+            mask_zero=True,
         )(inputs)
-        x = Masking(mask_value=0)(embedding_layer)
+        x = embedding_layer
 
-        for i, units in enumerate(self.units_per_layer):
+        for units in self.units_per_layer:
             if self.method == "LSTM":
                 x = LSTM(units, return_sequences=True)(x)
             elif self.method == "Bi-LSTM":
@@ -164,7 +210,7 @@ class DPEventLogSynthesizer:
             l2_norm_clip=self.l2_norm_clip,
             noise_multiplier=self.noise_multiplier,
             num_microbatches=1,
-            learning_rate=0.001,
+            learning_rate=self.learning_rate,
         )
 
         self.model = Model(inputs=inputs, outputs=outputs)
@@ -174,7 +220,7 @@ class DPEventLogSynthesizer:
             metrics=["accuracy"],
         )
 
-    def train(self, epochs: int) -> None:
+    def train(self, epochs: Optional[int] = None) -> None:
         """
         Trains the differentially private sequence model using the preprocessed data. Implements early stopping
         based on accuracy and custom callbacks for metrics logging and progress tracking.
@@ -187,27 +233,41 @@ class DPEventLogSynthesizer:
         """
         y_outputs = [self.ys[:, step] for step in range(self.num_cols)]
 
+        monitor_metric = f"val_{self.modified_column_list[0]}_accuracy"
         early_stopping = EarlyStopping(
-            monitor=f"{self.modified_column_list[0]}_accuracy",
+            monitor=monitor_metric,
             mode="max",
             verbose=0,
             patience=7,
             restore_best_weights=True,
             min_delta=0.001,
             baseline=None,
-            start_from_epoch=5
+            start_from_epoch=5,
         )
 
         metrics_logger = MetricsLogger(num_cols=self.num_cols, column_list=self.column_list)
         custom_progress_bar = CustomProgressBar()
+        callbacks = [early_stopping, metrics_logger, custom_progress_bar]
+        if self.checkpoint_path:
+            callbacks.append(
+                ModelCheckpoint(
+                    filepath=self.checkpoint_path,
+                    monitor=monitor_metric,
+                    mode="max",
+                    save_best_only=True,
+                    save_weights_only=True,
+                    verbose=0,
+                )
+            )
 
         self.model.fit(
             self.xs,
             y_outputs,
-            epochs=epochs,
+            epochs=epochs or self.epochs,
             batch_size=self.batch_size,
-            callbacks=[early_stopping, metrics_logger, custom_progress_bar],
-            verbose=0
+            callbacks=callbacks,
+            validation_split=self.validation_split,
+            verbose=0,
         )
 
         self.metrics_df = metrics_logger.get_dataframe()
@@ -226,7 +286,7 @@ class DPEventLogSynthesizer:
         self.initialize_model(input_data)
         self.train(self.epochs)
 
-    def sample(self, sample_size: int, batch_size: int) -> pd.DataFrame:
+    def sample(self, sample_size: int, batch_size: Optional[int] = None) -> pd.DataFrame:
         """
         Sample an event log from a trained DP-Bi-LSTM Model. The model must be trained before sampling. The sampling
         process can be controlled by the temperature parameter, which controls the randomness of sampling process.
@@ -239,8 +299,12 @@ class DPEventLogSynthesizer:
         Returns:
         pd.DataFrame: DataFrame containing the sampled event log.
         """
+        if self.model is None or self.tokenizer is None or self.max_sequence_len is None:
+            raise RuntimeError("Model must be trained or loaded before sampling.")
+
         len_synthetic_event_log = 0
         synthetic_df = pd.DataFrame()
+        batch = batch_size or self.batch_size
 
         while len_synthetic_event_log < sample_size:
             print("Sampling Event Log with:", sample_size - len_synthetic_event_log, "traces left")
@@ -251,7 +315,7 @@ class DPEventLogSynthesizer:
                 self.tokenizer,
                 self.max_sequence_len,
                 self.model,
-                batch_size,
+                batch,
                 self.num_cols,
                 self.column_list
             )
@@ -259,7 +323,11 @@ class DPEventLogSynthesizer:
             df = generate_df(synthetic_event_log_sentences, self.cluster_dict, self.dict_dtypes, self.start_epoch)
             df.reset_index(drop=True, inplace=True)
             synthetic_df = pd.concat([synthetic_df, df], axis=0, ignore_index=True)
-            len_synthetic_event_log += df["case:concept:name"].nunique()
+            new_cases = df["case:concept:name"].nunique()
+            if new_cases == 0:
+                print("Sampling produced 0 new cases; stopping to avoid infinite loop.")
+                break
+            len_synthetic_event_log += new_cases
 
         return synthetic_df
 
@@ -276,7 +344,17 @@ class DPEventLogSynthesizer:
         os.makedirs(path, exist_ok=True)
 
         self.model.save(os.path.join(path, "model.keras"))
-        self.metrics_df.to_excel(os.path.join(path, "training_metrics.xlsx"), index=False)
+        # Also save a full-model checkpoint alongside the saved model for discoverability
+        checkpoints_dir = os.path.join(path, "checkpoints")
+        os.makedirs(checkpoints_dir, exist_ok=True)
+        full_checkpoint_path = os.path.join(checkpoints_dir, "best.keras")
+        self.model.save(full_checkpoint_path)
+        # Prefer Excel if available, otherwise fallback to CSV
+        if self.metrics_df is not None and not self.metrics_df.empty:
+            try:
+                self.metrics_df.to_excel(os.path.join(path, "training_metrics.xlsx"), index=False)
+            except Exception:
+                self.metrics_df.to_csv(os.path.join(path, "training_metrics.csv"), index=False)
 
         config = {
             'embedding_output_dims': self.embedding_output_dims,
@@ -290,7 +368,12 @@ class DPEventLogSynthesizer:
             'l2_norm_clip': self.l2_norm_clip,
             'epsilon': self.epsilon,
             'noise_multiplier': self.noise_multiplier,
-            'num_examples': self.num_examples
+            'num_examples': self.num_examples,
+            'learning_rate': self.learning_rate,
+            'validation_split': self.validation_split,
+            # Record a full-model checkpoint path colocated with the saved model
+            'checkpoint_path': os.path.join('checkpoints', 'best.keras'),
+            'seed': self.seed,
         }
 
         with open(os.path.join(path, "model_config.yaml"), "w", encoding='utf-8') as handle:
@@ -319,7 +402,7 @@ class DPEventLogSynthesizer:
 
     def load(self, path: str) -> None:
         """
-        Load a trained PBLES Model from a given path.
+        Load a trained DPEventLogSynthesizer model from a given path.
 
         Parameters:
         path (str): Path to the trained PBLES Model.
@@ -349,3 +432,28 @@ class DPEventLogSynthesizer:
 
         with open(os.path.join(path, "column_list.pkl"), "rb") as handle:
             self.column_list = pickle.load(handle)
+
+        # Load configuration and restore attributes if present
+        config_path = os.path.join(path, "model_config.yaml")
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding='utf-8') as handle:
+                cfg = yaml.safe_load(handle) or {}
+            self.embedding_output_dims = cfg.get('embedding_output_dims', self.embedding_output_dims)
+            self.method = cfg.get('method', self.method)
+            self.units_per_layer = cfg.get('units_per_layer', self.units_per_layer)
+            self.epochs = cfg.get('epochs', self.epochs)
+            self.batch_size = cfg.get('batch_size', self.batch_size)
+            self.max_clusters = cfg.get('max_clusters', self.max_clusters)
+            self.dropout = cfg.get('dropout', self.dropout)
+            self.trace_quantile = cfg.get('trace_quantile', self.trace_quantile)
+            self.l2_norm_clip = cfg.get('l2_norm_clip', self.l2_norm_clip)
+            self.epsilon = cfg.get('epsilon', self.epsilon)
+            self.noise_multiplier = cfg.get('noise_multiplier', self.noise_multiplier)
+            self.num_examples = cfg.get('num_examples', self.num_examples)
+            self.learning_rate = cfg.get('learning_rate', self.learning_rate)
+            self.validation_split = cfg.get('validation_split', self.validation_split)
+            self.checkpoint_path = cfg.get('checkpoint_path', self.checkpoint_path)
+            self.seed = cfg.get('seed', self.seed)
+
+        # Rebuild modified column list based on loaded columns
+        self.modified_column_list = [c.replace(":", "_").replace(" ", "_") for c in (self.column_list or [])]
