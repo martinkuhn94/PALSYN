@@ -21,22 +21,21 @@ from keras.layers import (
     SimpleRNN,
 )
 
-# TensorFlow Privacy optimizer import compatibility across versions
 try:
     from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
         DPKerasAdamOptimizer,
     )
-except Exception:  # pragma: no cover - fallback for alternate tf-privacy versions
+except Exception:
     try:
         from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras_vectorized import (
-            DPKerasAdamOptimizer,  # type: ignore
+            DPKerasAdamOptimizer,
         )
     except Exception:
         try:
             from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
-                DPKerasAdamGaussianOptimizer as DPKerasAdamOptimizer,  # type: ignore
+                DPKerasAdamGaussianOptimizer as DPKerasAdamOptimizer,
             )
-        except Exception as exc:  # Re-raise with helpful message
+        except Exception as exc:
             raise ImportError(
                 "Unable to import a DP Keras Adam optimizer from tensorflow_privacy."
             ) from exc
@@ -49,24 +48,27 @@ from PALSYN.postprocessing.log_postprocessing import generate_df
 
 
 class DPEventLogSynthesizer:
-    """
-    A class for implementing a Differentially Private Sequence model for event log synthetization. This class handles
-    the initialization, training and management of a privacy-preserving sequence models.
+    """Differentially private sequence model for event log synthesis.
 
-    Parameters:
-    embedding_output_dims (int): Dimension of the embedding layer output. Default is 16.
-    method (str): Type of recurrent layer to use, typically "LSTM". Default is "LSTM".
-    units_per_layer (list): Number of units in each LSTM layer. Default is None.
-    epochs (int): Number of training epochs. Default is 3.
-    batch_size (int): Size of batches for training. Default is 16.
-    max_clusters (int): Maximum number of clusters for categorical variables. Default is 10.
-    dropout (float): Dropout rate for regularization. Default is 0.0.
-    trace_quantile (float): Quantile value for trace length calculation. Default is 0.95.
-    l2_norm_clip (float): Clipping norm for differential privacy. Default is 1.5.
-    epsilon (float): Privacy budget for differential privacy. Default is None.
+    Builds and trains a privacy-preserving sequence model, then samples
+    synthetic event logs. Provides utilities for preprocessing, tokenization,
+    training with callbacks, and saving/loading all artifacts.
 
-    Returns:
-    None
+    Args:
+        embedding_output_dims: Size of the embedding vectors.
+        method: Recurrent layer type ("LSTM", "Bi-LSTM", "GRU", "Bi-GRU", "RNN", "Bi-RNN").
+        units_per_layer: Hidden units per recurrent layer.
+        epochs: Default number of training epochs.
+        batch_size: Training batch size.
+        max_clusters: Maximum clusters for categorical variables during preprocessing.
+        dropout: Dropout rate applied before the output layers.
+        trace_quantile: Quantile used to bound trace length.
+        l2_norm_clip: L2 clipping norm for the DP optimizer.
+        epsilon: Target privacy budget used by preprocessing to derive noise.
+        learning_rate: Optimizer learning rate.
+        validation_split: Fraction of training data used for validation.
+        checkpoint_path: Optional path for training-time checkpoints.
+        seed: Random seed for reproducibility. If None, a seed is generated.
     """
 
     def __init__(
@@ -105,7 +107,6 @@ class DPEventLogSynthesizer:
         self.num_cols = None
         self.column_list = None
 
-        # Defaults and validations
         self.units_per_layer = units_per_layer or [64, 64]
         if not isinstance(self.units_per_layer, list) or not all(
                 isinstance(u, int) and u > 0 for u in self.units_per_layer
@@ -124,7 +125,6 @@ class DPEventLogSynthesizer:
         self.validation_split = validation_split
         self.checkpoint_path = checkpoint_path
 
-        # Reproducibility: always have and record a seed
         if seed is None:
             try:
                 seed = random.SystemRandom().randint(0, 2**31 - 1)
@@ -141,16 +141,10 @@ class DPEventLogSynthesizer:
         self.num_examples = None
 
     def initialize_model(self, input_data: pd.DataFrame) -> None:
-        """
-        Initializes and compiles the differentially private sequence model. This includes preprocessing the input data,
-        tokenizing the event log, building the model architecture with the specified sequence layer type,
-        and configuring the differentially private optimizer.
+        """Prepare data, build the network, and compile with a DP optimizer.
 
-        Parameters:
-        input_data (pd.DataFrame): Input event log data to be processed.
-
-        Returns:
-        None
+        Args:
+            input_data: Raw event log DataFrame to preprocess and tokenize.
         """
         (
             self.event_log_sentences,
@@ -221,15 +215,10 @@ class DPEventLogSynthesizer:
         )
 
     def train(self, epochs: Optional[int] = None) -> None:
-        """
-        Trains the differentially private sequence model using the preprocessed data. Implements early stopping
-        based on accuracy and custom callbacks for metrics logging and progress tracking.
+        """Train the model with early stopping, metrics logging, and optional checkpoints.
 
-        Parameters:
-        epochs (int): Number of training epochs to run.
-
-        Returns:
-        None
+        Args:
+            epochs: Number of epochs. Defaults to the value set at initialization.
         """
         y_outputs = [self.ys[:, step] for step in range(self.num_cols)]
 
@@ -273,31 +262,23 @@ class DPEventLogSynthesizer:
         self.metrics_df = metrics_logger.get_dataframe()
 
     def fit(self, input_data: pd.DataFrame) -> None:
-        """
-        Fits the differentially private sequence model by initializing the model architecture and training it
-        on the provided event log data.
+        """Initialize the model and run training on the provided data.
 
-        Parameters:
-        input_data (pd.DataFrame): Input event log data to train the model on.
-
-        Returns:
-        None
+        Args:
+            input_data: Event log DataFrame.
         """
         self.initialize_model(input_data)
         self.train(self.epochs)
 
     def sample(self, sample_size: int, batch_size: Optional[int] = None) -> pd.DataFrame:
-        """
-        Sample an event log from a trained DP-Bi-LSTM Model. The model must be trained before sampling. The sampling
-        process can be controlled by the temperature parameter, which controls the randomness of sampling process.
-        A higher temperature results in more randomness.
+        """Generate a synthetic event log using the trained model.
 
-        Parameters:
-        sample_size (int): Number of traces to sample.
-        batch_size (int): Number of traces to sample in a batch.
+        Args:
+            sample_size: Number of traces to sample.
+            batch_size: Optional batch size for sampling.
 
         Returns:
-        pd.DataFrame: DataFrame containing the sampled event log.
+            A DataFrame containing the sampled event log.
         """
         if self.model is None or self.tokenizer is None or self.max_sequence_len is None:
             raise RuntimeError("Model must be trained or loaded before sampling.")
@@ -332,24 +313,18 @@ class DPEventLogSynthesizer:
         return synthetic_df
 
     def save_model(self, path: str) -> None:
-        """
-        Save a trained PBLES Model to a given path.
+        """Persist the model, checkpoints, metrics, and preprocessing artifacts.
 
-        Parameters:
-        path (str): Path to save the trained PBLES Model.
-
-        Returns:
-        None
+        Args:
+            path: Destination directory.
         """
         os.makedirs(path, exist_ok=True)
 
         self.model.save(os.path.join(path, "model.keras"))
-        # Also save a full-model checkpoint alongside the saved model for discoverability
         checkpoints_dir = os.path.join(path, "checkpoints")
         os.makedirs(checkpoints_dir, exist_ok=True)
         full_checkpoint_path = os.path.join(checkpoints_dir, "best.keras")
         self.model.save(full_checkpoint_path)
-        # Prefer Excel if available, otherwise fallback to CSV
         if self.metrics_df is not None and not self.metrics_df.empty:
             try:
                 self.metrics_df.to_excel(os.path.join(path, "training_metrics.xlsx"), index=False)
@@ -371,7 +346,6 @@ class DPEventLogSynthesizer:
             'num_examples': self.num_examples,
             'learning_rate': self.learning_rate,
             'validation_split': self.validation_split,
-            # Record a full-model checkpoint path colocated with the saved model
             'checkpoint_path': os.path.join('checkpoints', 'best.keras'),
             'seed': self.seed,
         }
@@ -401,14 +375,10 @@ class DPEventLogSynthesizer:
             pickle.dump(self.column_list, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
     def load(self, path: str) -> None:
-        """
-        Load a trained DPEventLogSynthesizer model from a given path.
+        """Load a saved model and all required artifacts from a directory.
 
-        Parameters:
-        path (str): Path to the trained PBLES Model.
-
-        Returns:
-        None
+        Args:
+            path: Directory containing the saved model and artifacts.
         """
         self.model = tf.keras.models.load_model(os.path.join(path, "model.keras"), compile=False)
 
@@ -433,7 +403,6 @@ class DPEventLogSynthesizer:
         with open(os.path.join(path, "column_list.pkl"), "rb") as handle:
             self.column_list = pickle.load(handle)
 
-        # Load configuration and restore attributes if present
         config_path = os.path.join(path, "model_config.yaml")
         if os.path.exists(config_path):
             with open(config_path, "r", encoding='utf-8') as handle:
@@ -455,5 +424,4 @@ class DPEventLogSynthesizer:
             self.checkpoint_path = cfg.get('checkpoint_path', self.checkpoint_path)
             self.seed = cfg.get('seed', self.seed)
 
-        # Rebuild modified column list based on loaded columns
         self.modified_column_list = [c.replace(":", "_").replace(" ", "_") for c in (self.column_list or [])]
