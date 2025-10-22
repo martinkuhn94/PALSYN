@@ -17,7 +17,6 @@ from keras.layers import (
     Embedding,
     LSTM,
     GRU,
-    GlobalAveragePooling1D,
     SimpleRNN,
 )
 
@@ -173,21 +172,22 @@ class DPEventLogSynthesizer:
         )(inputs)
         x = embedding_layer
 
-        for units in self.units_per_layer:
+        # Use last-state pooling: final recurrent layer returns last timestep
+        for idx, units in enumerate(self.units_per_layer):
+            is_last = idx == (len(self.units_per_layer) - 1)
+            return_seq = not is_last
             if self.method == "LSTM":
-                x = LSTM(units, return_sequences=True)(x)
+                x = LSTM(units, return_sequences=return_seq)(x)
             elif self.method == "Bi-LSTM":
-                x = Bidirectional(LSTM(units, return_sequences=True))(x)
+                x = Bidirectional(LSTM(units, return_sequences=return_seq))(x)
             elif self.method == "GRU":
-                x = GRU(units, return_sequences=True)(x)
+                x = GRU(units, return_sequences=return_seq)(x)
             elif self.method == "Bi-GRU":
-                x = Bidirectional(GRU(units, return_sequences=True))(x)
+                x = Bidirectional(GRU(units, return_sequences=return_seq))(x)
             elif self.method == "RNN":
-                x = SimpleRNN(units, return_sequences=True)(x)
+                x = SimpleRNN(units, return_sequences=return_seq)(x)
             elif self.method == "Bi-RNN":
-                x = Bidirectional(SimpleRNN(units, return_sequences=True))(x)
-
-        x = GlobalAveragePooling1D()(x)
+                x = Bidirectional(SimpleRNN(units, return_sequences=return_seq))(x)
         x = BatchNormalization()(x)
         x = Dropout(self.dropout)(x)
 
