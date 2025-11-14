@@ -34,20 +34,20 @@ def tokenize_log(
     tokenizer = Tokenizer(lower=False)
     tokenizer.fit_on_texts(event_log_sentences)
     total_words = len(tokenizer.word_index) + 1
-
     print(f"Number of unique tokens: {total_words - 1}")
+
+    encoded_sentences = tokenizer.texts_to_sequences(event_log_sentences)
 
     input_sequences: list[list[int]] = []
     targets: list[list[int]] = []
 
-    for sentence in event_log_sentences:
-        token_list = tokenizer.texts_to_sequences([list(sentence)])[0]
+    for token_list in encoded_sentences:
         for i in range(steps, len(token_list), steps):
-            n_gram_sequence = token_list[:i]
-            input_sequences.append(n_gram_sequence)
+            input_sequences.append(token_list[:i])
 
             next_steps = token_list[i : i + steps]
-            next_steps += [0] * (steps - len(next_steps))
+            if len(next_steps) < steps:
+                next_steps = next_steps + [0] * (steps - len(next_steps))
             targets.append(next_steps)
 
     if not input_sequences:
