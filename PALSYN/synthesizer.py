@@ -1,25 +1,29 @@
+from __future__ import annotations
+
 import os
 import pickle
-import yaml
 import random
-from typing import List, Optional
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import tensorflow as tf
+import yaml
 from keras import Input, Model
 from keras.callbacks import EarlyStopping, ModelCheckpoint
 from keras.layers import (
+    GRU,
+    LSTM,
+    RNN,
     BatchNormalization,
     Bidirectional,
     Conv1D,
     Dense,
     Dropout,
     Embedding,
-    GRU,
-    LSTM,
     Lambda,
-    RNN,
     SimpleRNN,
 )
 
@@ -42,11 +46,19 @@ except Exception:
                 "Unable to import a DP Keras Adam optimizer from tensorflow_privacy."
             ) from exc
 
-from PALSYN.metrics_logger import MetricsLogger, CustomProgressBar
+from PALSYN.metrics_logger import CustomProgressBar, MetricsLogger
+from PALSYN.postprocessing.log_postprocessing import generate_df
 from PALSYN.preprocessing.log_preprocessing import preprocess_event_log
 from PALSYN.preprocessing.log_tokenization import tokenize_log
 from PALSYN.sampling.log_sampling import sample_batch
-from PALSYN.postprocessing.log_postprocessing import generate_df
+
+
+def _load_pickle_file(file_path: str) -> Any:
+    """Load a trusted pickle artifact stored alongside the trained model."""
+    with open(file_path, "rb") as handle:
+        return pickle.load(handle)  # noqa: S301 - local, versioned artifacts only
+
+IntArray = npt.NDArray[np.int_]
 
 
 @tf.keras.utils.register_keras_serializable(package="palsyn")
@@ -54,13 +66,13 @@ class LiquidTimeConstantCell(tf.keras.layers.AbstractRNNCell):
     """Simple liquid neural network cell with learnable time constants."""
 
     def __init__(
-            self,
-            units: int,
-            tau_min: float = 0.1,
-            tau_max: float = 2.0,
-            connectivity: float = 0.3,
-            activation: str = "tanh",
-            **kwargs,
+        self,
+        units: int,
+        tau_min: float = 0.1,
+        tau_max: float = 2.0,
+        connectivity: float = 0.3,
+        activation: str = "tanh",
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.units = int(units)
@@ -68,17 +80,17 @@ class LiquidTimeConstantCell(tf.keras.layers.AbstractRNNCell):
         self.tau_max = max(float(tau_max), self.tau_min + 1e-3)
         self.connectivity = float(np.clip(connectivity, 0.0, 1.0))
         self.activation_fn = tf.keras.activations.get(activation)
-        self._recurrent_mask = None
+        self._recurrent_mask: tf.Tensor | None = None
 
     @property
-    def state_size(self):
+    def state_size(self) -> int:
         return self.units
 
     @property
-    def output_size(self):
+    def output_size(self) -> int:
         return self.units
 
-    def build(self, input_shape) -> None:
+    def build(self, input_shape: Sequence[int]) -> None:
         input_dim = int(input_shape[-1])
         kernel_init = tf.keras.initializers.GlorotUniform()
         recurrent_init = tf.keras.initializers.Orthogonal()
@@ -113,7 +125,9 @@ class LiquidTimeConstantCell(tf.keras.layers.AbstractRNNCell):
 
         super().build(input_shape)
 
-    def call(self, inputs, states):
+    def call(
+        self, inputs: tf.Tensor, states: Sequence[tf.Tensor]
+    ) -> tuple[tf.Tensor, list[tf.Tensor]]:
         prev_state = states[0]
         effective_kernel = self.recurrent_kernel
         if self._recurrent_mask is not None:
@@ -159,47 +173,46 @@ class DPEventLogSynthesizer:
     """
 
     def __init__(
-            self,
-            embedding_output_dims: int = 16,
-            method: str = "LSTM",
-            units_per_layer: Optional[List[int]] = None,
-            epochs: int = 3,
-            batch_size: int = 16,
-            max_clusters: int = 10,
-            dropout: float = 0.0,
-            trace_quantile: float = 0.95,
-            l2_norm_clip: float = 1.5,
-            epsilon: Optional[float] = None,
-            learning_rate: float = 0.001,
-            validation_split: float = 0.1,
-            checkpoint_path: Optional[str] = None,
-            seed: Optional[int] = None,
-            liquid_tau_min: float = 0.1,
-            liquid_tau_max: float = 2.0,
-            liquid_connectivity: float = 0.3,
+        self,
+        embedding_output_dims: int = 16,
+        method: str = "LSTM",
+        units_per_layer: list[int] | None = None,
+        epochs: int = 3,
+        batch_size: int = 16,
+        max_clusters: int = 10,
+        dropout: float = 0.0,
+        trace_quantile: float = 0.95,
+        l2_norm_clip: float = 1.5,
+        epsilon: float | None = None,
+        learning_rate: float = 0.001,
+        validation_split: float = 0.1,
+        checkpoint_path: str | None = None,
+        seed: int | None = None,
+        liquid_tau_min: float = 0.1,
+        liquid_tau_max: float = 2.0,
+        liquid_connectivity: float = 0.3,
     ) -> None:
-
-        self.modified_column_list = None
-        self.metrics_df = None
-        self.dict_dtypes = None
-        self.cluster_dict = None
-        self.event_log_sentences = None
+        self.modified_column_list: list[str] = []
+        self.metrics_df: pd.DataFrame | None = None
+        self.dict_dtypes: dict[str, Any] | None = None
+        self.cluster_dict: dict[str, Any] | None = None
+        self.event_log_sentences: list[list[str]] = []
         self.max_clusters = max_clusters
         self.trace_quantile = trace_quantile
 
-        self.model = None
-        self.max_sequence_len = None
-        self.total_words = None
-        self.tokenizer = None
-        self.ys = None
-        self.xs = None
-        self.start_epoch = None
-        self.num_cols = None
-        self.column_list = None
+        self.model: Model | None = None
+        self.max_sequence_len: int | None = None
+        self.total_words: int = 0
+        self.tokenizer: Any = None
+        self.ys: IntArray | None = None
+        self.xs: IntArray | None = None
+        self.start_epoch: list[float] = []
+        self.num_cols: int = 0
+        self.column_list: list[str] = []
 
-        self.units_per_layer = units_per_layer or [64, 64]
+        self.units_per_layer = list(units_per_layer) if units_per_layer else [64, 64]
         if not isinstance(self.units_per_layer, list) or not all(
-                isinstance(u, int) and u > 0 for u in self.units_per_layer
+            isinstance(u, int) and u > 0 for u in self.units_per_layer
         ):
             raise ValueError("units_per_layer must be a list of positive ints")
 
@@ -223,18 +236,18 @@ class DPEventLogSynthesizer:
             try:
                 seed = random.SystemRandom().randint(0, 2**31 - 1)
             except Exception:
-                seed = int.from_bytes(os.urandom(4), 'little')
+                seed = int.from_bytes(os.urandom(4), "little")
         self.seed = seed
         random.seed(self.seed)
         np.random.seed(self.seed)
         tf.random.set_seed(self.seed)
 
-        self.noise_multiplier = None
+        self.noise_multiplier: float = 0.0
         self.epsilon = epsilon
         self.l2_norm_clip = l2_norm_clip
-        self.num_examples = None
+        self.num_examples: int = 0
 
-    def initialize_model(self, input_data: pd.DataFrame) -> None:
+    def initialize_model(self, input_data: pd.DataFrame) -> None:  # noqa: C901 - orchestration heavy
         """Prepare data, build the network, and compile with a DP optimizer.
 
         Args:
@@ -248,16 +261,21 @@ class DPEventLogSynthesizer:
             self.num_examples,
             self.noise_multiplier,
             self.num_cols,
-            self.column_list
+            self.column_list,
         ) = preprocess_event_log(
-            input_data, self.max_clusters, self.trace_quantile, self.epsilon, self.batch_size, self.epochs
+            input_data,
+            self.max_clusters,
+            self.trace_quantile,
+            self.epsilon,
+            self.batch_size,
+            self.epochs,
         )
 
         (self.xs, self.ys, self.total_words, self.max_sequence_len, self.tokenizer) = tokenize_log(
             self.event_log_sentences, steps=self.num_cols
         )
 
-        inputs = Input(shape=(self.max_sequence_len,), dtype='int32')
+        inputs = Input(shape=(self.max_sequence_len,), dtype="int32")
         embedding_layer = Embedding(
             self.total_words,
             self.embedding_output_dims,
@@ -297,7 +315,9 @@ class DPEventLogSynthesizer:
             self.modified_column_list.append(column.replace(":", "_").replace(" ", "_"))
 
         for step in range(self.num_cols):
-            output = Dense(self.total_words, activation="softmax", name=f"{self.modified_column_list[step]}")(x)
+            output = Dense(
+                self.total_words, activation="softmax", name=f"{self.modified_column_list[step]}"
+            )(x)
             outputs.append(output)
 
         self.model = Model(inputs=inputs, outputs=outputs)
@@ -308,7 +328,7 @@ class DPEventLogSynthesizer:
             metrics=["accuracy"],
         )
 
-    def _build_optimizer(self):
+    def _build_optimizer(self) -> tf.keras.optimizers.Optimizer:
         """Return a DP optimizer only when noise is required."""
         if self.noise_multiplier is not None and self.noise_multiplier > 0:
             return DPKerasAdamOptimizer(
@@ -338,7 +358,7 @@ class DPEventLogSynthesizer:
         """Temporal convolutional encoder that returns the final timestep embedding."""
         x = inputs
         for idx, filters in enumerate(self.units_per_layer):
-            dilation = 2 ** idx
+            dilation = 2**idx
             x = Conv1D(
                 filters=filters,
                 kernel_size=3,
@@ -348,12 +368,15 @@ class DPEventLogSynthesizer:
             )(x)
         return Lambda(lambda t: t[:, -1, :], name="tcn_last_state")(x)
 
-    def train(self, epochs: Optional[int] = None) -> None:
+    def train(self, epochs: int | None = None) -> None:
         """Train the model with early stopping, metrics logging, and optional checkpoints.
 
         Args:
             epochs: Number of epochs. Defaults to the value set at initialization.
         """
+        if self.model is None or self.xs is None or self.ys is None:
+            raise RuntimeError("Model must be initialized before training.")
+
         y_outputs = [self.ys[:, step] for step in range(self.num_cols)]
 
         monitor_metric = f"val_{self.modified_column_list[0]}_accuracy"
@@ -404,7 +427,7 @@ class DPEventLogSynthesizer:
         self.initialize_model(input_data)
         self.train(self.epochs)
 
-    def sample(self, sample_size: int, batch_size: Optional[int] = None) -> pd.DataFrame:
+    def sample(self, sample_size: int, batch_size: int | None = None) -> pd.DataFrame:
         """Generate a synthetic event log using the trained model.
 
         Args:
@@ -414,7 +437,15 @@ class DPEventLogSynthesizer:
         Returns:
             A DataFrame containing the sampled event log.
         """
-        if self.model is None or self.tokenizer is None or self.max_sequence_len is None:
+        if (
+            self.model is None
+            or self.tokenizer is None
+            or self.max_sequence_len is None
+            or self.cluster_dict is None
+            or self.dict_dtypes is None
+            or not self.start_epoch
+            or not self.column_list
+        ):
             raise RuntimeError("Model must be trained or loaded before sampling.")
 
         len_synthetic_event_log = 0
@@ -432,10 +463,12 @@ class DPEventLogSynthesizer:
                 self.model,
                 batch,
                 self.num_cols,
-                self.column_list
+                self.column_list,
             )
 
-            df = generate_df(synthetic_event_log_sentences, self.cluster_dict, self.dict_dtypes, self.start_epoch)
+            df = generate_df(
+                synthetic_event_log_sentences, self.cluster_dict, self.dict_dtypes, self.start_epoch
+            )
             df.reset_index(drop=True, inplace=True)
             synthetic_df = pd.concat([synthetic_df, df], axis=0, ignore_index=True)
             new_cases = df["case:concept:name"].nunique()
@@ -452,6 +485,11 @@ class DPEventLogSynthesizer:
         Args:
             path: Destination directory.
         """
+        if self.model is None:
+            raise RuntimeError("Train or load a model before saving.")
+        if self.tokenizer is None or self.cluster_dict is None or self.dict_dtypes is None:
+            raise RuntimeError("Tokenizer and preprocessing artifacts must be available to save.")
+
         os.makedirs(path, exist_ok=True)
 
         self.model.save(os.path.join(path, "model.keras"))
@@ -466,25 +504,25 @@ class DPEventLogSynthesizer:
                 self.metrics_df.to_csv(os.path.join(path, "training_metrics.csv"), index=False)
 
         config = {
-            'embedding_output_dims': self.embedding_output_dims,
-            'method': self.method,
-            'units_per_layer': self.units_per_layer,
-            'epochs': self.epochs,
-            'batch_size': self.batch_size,
-            'max_clusters': self.max_clusters,
-            'dropout': self.dropout,
-            'trace_quantile': self.trace_quantile,
-            'l2_norm_clip': self.l2_norm_clip,
-            'epsilon': self.epsilon,
-            'noise_multiplier': self.noise_multiplier,
-            'num_examples': self.num_examples,
-            'learning_rate': self.learning_rate,
-            'validation_split': self.validation_split,
-            'checkpoint_path': os.path.join('checkpoints', 'best.keras'),
-            'seed': self.seed,
+            "embedding_output_dims": self.embedding_output_dims,
+            "method": self.method,
+            "units_per_layer": self.units_per_layer,
+            "epochs": self.epochs,
+            "batch_size": self.batch_size,
+            "max_clusters": self.max_clusters,
+            "dropout": self.dropout,
+            "trace_quantile": self.trace_quantile,
+            "l2_norm_clip": self.l2_norm_clip,
+            "epsilon": self.epsilon,
+            "noise_multiplier": self.noise_multiplier,
+            "num_examples": self.num_examples,
+            "learning_rate": self.learning_rate,
+            "validation_split": self.validation_split,
+            "checkpoint_path": os.path.join("checkpoints", "best.keras"),
+            "seed": self.seed,
         }
 
-        with open(os.path.join(path, "model_config.yaml"), "w", encoding='utf-8') as handle:
+        with open(os.path.join(path, "model_config.yaml"), "w", encoding="utf-8") as handle:
             yaml.dump(config, handle, default_flow_style=False)
 
         with open(os.path.join(path, "tokenizer.pkl"), "wb") as handle:
@@ -493,7 +531,7 @@ class DPEventLogSynthesizer:
         with open(os.path.join(path, "cluster_dict.pkl"), "wb") as handle:
             pickle.dump(self.cluster_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-        with open(os.path.join(path, "dict_dtypes.yaml"), "w", encoding='utf-8') as handle:
+        with open(os.path.join(path, "dict_dtypes.yaml"), "w", encoding="utf-8") as handle:
             yaml.dump(self.dict_dtypes, handle, default_flow_style=False)
 
         with open(os.path.join(path, "max_sequence_len.pkl"), "wb") as handle:
@@ -516,46 +554,40 @@ class DPEventLogSynthesizer:
         """
         self.model = tf.keras.models.load_model(os.path.join(path, "model.keras"), compile=False)
 
-        with open(os.path.join(path, "tokenizer.pkl"), "rb") as handle:
-            self.tokenizer = pickle.load(handle)
+        self.tokenizer = _load_pickle_file(os.path.join(path, "tokenizer.pkl"))
+        self.cluster_dict = _load_pickle_file(os.path.join(path, "cluster_dict.pkl"))
 
-        with open(os.path.join(path, "cluster_dict.pkl"), "rb") as handle:
-            self.cluster_dict = pickle.load(handle)
-
-        with open(os.path.join(path, "dict_dtypes.yaml"), "r", encoding='utf-8') as handle:
+        with open(os.path.join(path, "dict_dtypes.yaml"), encoding="utf-8") as handle:
             self.dict_dtypes = yaml.safe_load(handle)
 
-        with open(os.path.join(path, "max_sequence_len.pkl"), "rb") as handle:
-            self.max_sequence_len = pickle.load(handle)
-
-        with open(os.path.join(path, "start_epoch.pkl"), "rb") as handle:
-            self.start_epoch = pickle.load(handle)
-
-        with open(os.path.join(path, "num_cols.pkl"), "rb") as handle:
-            self.num_cols = pickle.load(handle)
-
-        with open(os.path.join(path, "column_list.pkl"), "rb") as handle:
-            self.column_list = pickle.load(handle)
+        self.max_sequence_len = _load_pickle_file(os.path.join(path, "max_sequence_len.pkl"))
+        self.start_epoch = _load_pickle_file(os.path.join(path, "start_epoch.pkl"))
+        self.num_cols = _load_pickle_file(os.path.join(path, "num_cols.pkl"))
+        self.column_list = _load_pickle_file(os.path.join(path, "column_list.pkl"))
 
         config_path = os.path.join(path, "model_config.yaml")
         if os.path.exists(config_path):
-            with open(config_path, "r", encoding='utf-8') as handle:
+            with open(config_path, encoding="utf-8") as handle:
                 cfg = yaml.safe_load(handle) or {}
-            self.embedding_output_dims = cfg.get('embedding_output_dims', self.embedding_output_dims)
-            self.method = cfg.get('method', self.method)
-            self.units_per_layer = cfg.get('units_per_layer', self.units_per_layer)
-            self.epochs = cfg.get('epochs', self.epochs)
-            self.batch_size = cfg.get('batch_size', self.batch_size)
-            self.max_clusters = cfg.get('max_clusters', self.max_clusters)
-            self.dropout = cfg.get('dropout', self.dropout)
-            self.trace_quantile = cfg.get('trace_quantile', self.trace_quantile)
-            self.l2_norm_clip = cfg.get('l2_norm_clip', self.l2_norm_clip)
-            self.epsilon = cfg.get('epsilon', self.epsilon)
-            self.noise_multiplier = cfg.get('noise_multiplier', self.noise_multiplier)
-            self.num_examples = cfg.get('num_examples', self.num_examples)
-            self.learning_rate = cfg.get('learning_rate', self.learning_rate)
-            self.validation_split = cfg.get('validation_split', self.validation_split)
-            self.checkpoint_path = cfg.get('checkpoint_path', self.checkpoint_path)
-            self.seed = cfg.get('seed', self.seed)
+            self.embedding_output_dims = cfg.get(
+                "embedding_output_dims", self.embedding_output_dims
+            )
+            self.method = cfg.get("method", self.method)
+            self.units_per_layer = cfg.get("units_per_layer", self.units_per_layer)
+            self.epochs = cfg.get("epochs", self.epochs)
+            self.batch_size = cfg.get("batch_size", self.batch_size)
+            self.max_clusters = cfg.get("max_clusters", self.max_clusters)
+            self.dropout = cfg.get("dropout", self.dropout)
+            self.trace_quantile = cfg.get("trace_quantile", self.trace_quantile)
+            self.l2_norm_clip = cfg.get("l2_norm_clip", self.l2_norm_clip)
+            self.epsilon = cfg.get("epsilon", self.epsilon)
+            self.noise_multiplier = cfg.get("noise_multiplier", self.noise_multiplier)
+            self.num_examples = cfg.get("num_examples", self.num_examples)
+            self.learning_rate = cfg.get("learning_rate", self.learning_rate)
+            self.validation_split = cfg.get("validation_split", self.validation_split)
+            self.checkpoint_path = cfg.get("checkpoint_path", self.checkpoint_path)
+            self.seed = cfg.get("seed", self.seed)
 
-        self.modified_column_list = [c.replace(":", "_").replace(" ", "_") for c in (self.column_list or [])]
+        self.modified_column_list = [
+            c.replace(":", "_").replace(" ", "_") for c in (self.column_list or [])
+        ]

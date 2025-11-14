@@ -1,15 +1,18 @@
-from datetime import datetime
-import time
 import os
+import time
+from datetime import datetime
 
 import pandas as pd
 import pm4py
-from PALSYN.synthesizer import DPEventLogSynthesizer
+from process_mining_eval_functions import (
+    calc_hellinger,
+    calculate_throughput_time,
+    calculate_trace_length_distribution,
+)
 from sdmetrics.single_column import KSComplement
-from PALSYN.postprocessing.log_postprocessing import clean_xes_file
-from process_mining_eval_functions import (calculate_throughput_time, \
-                                           calculate_trace_length_distribution, calc_hellinger)
 
+from PALSYN.postprocessing.log_postprocessing import clean_xes_file
+from PALSYN.synthesizer import DPEventLogSynthesizer
 
 # To run this file you need to install the following packages:
 # pip install pyemd
@@ -18,7 +21,9 @@ from process_mining_eval_functions import (calculate_throughput_time, \
 
 # Read Event Log
 log_filename = "Road_Traffic_Fine_Management_Process_short.xes"
-real_event_log_filename = os.path.join(os.path.dirname(os.path.dirname(__file__)), "example_logs", log_filename)
+real_event_log_filename = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)), "example_logs", log_filename
+)
 event_log_train = pm4py.read_xes(real_event_log_filename)
 
 event_log_name = "Sepsis_Case"
@@ -63,15 +68,24 @@ for method in method_array:
             model.initialize_model(event_log_train)
 
             # Train in intervals defined by breakpoint_interval
-            for current_epoch in range(breakpoint_interval, num_epochs + breakpoint_interval, breakpoint_interval):
-                results = {"method": method, "units": units, "epsilon": epsilon_str, "epochs": current_epoch}
+            for current_epoch in range(
+                breakpoint_interval, num_epochs + breakpoint_interval, breakpoint_interval
+            ):
+                results = {
+                    "method": method,
+                    "units": units,
+                    "epsilon": epsilon_str,
+                    "epochs": current_epoch,
+                }
 
                 # Train for breakpoint_interval epochs
                 start_time = time.time()
                 print(f"Training epochs {current_epoch - breakpoint_interval} to {current_epoch}")
                 model.train(epochs=breakpoint_interval)
 
-                model_name = f"models/{method}_{event_log_name}_u={units}_e={epsilon_str}_ep={current_epoch}"
+                model_name = (
+                    f"models/{method}_{event_log_name}_u={units}_e={epsilon_str}_ep={current_epoch}"
+                )
                 model.save_model(model_name)
                 print(f"Model saved at epoch {current_epoch}: {model_name}")
 
@@ -90,9 +104,13 @@ for method in method_array:
                     results["sampling_time"] = sampling_time
 
                     # Save as XES File
-                    xes_filename = f"synthetic_logs/{method}_{event_log_name}_u={units}_e={epsilon_str}_ep={current_epoch}.xes"
+                    xes_filename = (
+                        "synthetic_logs/"
+                        f"{method}_{event_log_name}_u={units}_e={epsilon_str}_ep={current_epoch}.xes"
+                    )
                     pm4py.write_xes(event_log_xes, xes_filename)
-                except:
+                except Exception as exc:
+                    print(f"Sampling or serialization failed: {exc}")
                     continue
 
                 # Transform XES
@@ -105,17 +123,20 @@ for method in method_array:
                 df_synthetic = pm4py.convert_to_dataframe(synthetic_event_log)
 
                 # region DF pre-processing
-                df_real = df_real.drop(columns=['time:timestamp', 'case:concept:name', 'concept:name'], axis=1)
-                df_synthetic = df_synthetic.drop(columns=['time:timestamp', 'case:concept:name', 'concept:name'],
-                                                 axis=1)
+                df_real = df_real.drop(
+                    columns=["time:timestamp", "case:concept:name", "concept:name"], axis=1
+                )
+                df_synthetic = df_synthetic.drop(
+                    columns=["time:timestamp", "case:concept:name", "concept:name"], axis=1
+                )
 
                 # Make dataframe with only numeric columns
-                df_real_numeric = df_real.select_dtypes(include=['int64', 'float64'])
-                df_synthetic_numeric = df_synthetic.select_dtypes(include=['int64', 'float64'])
+                df_real_numeric = df_real.select_dtypes(include=["int64", "float64"])
+                df_synthetic_numeric = df_synthetic.select_dtypes(include=["int64", "float64"])
 
                 # Make dataframe with only categorical columns
-                df_real_categorical = df_real.select_dtypes(include=['object'])
-                df_synthetic_categorical = df_synthetic.select_dtypes(include=['object'])
+                df_real_categorical = df_real.select_dtypes(include=["object"])
+                df_synthetic_categorical = df_synthetic.select_dtypes(include=["object"])
                 # endregion
 
                 # region Attribute Perspective Evaluation
@@ -131,9 +152,16 @@ for method in method_array:
 
                     data_real = df_real_numeric[col].dropna()
                     data_synthetic = df_synthetic_numeric[col].dropna()
-                    ks_statistic = KSComplement.compute(real_data=data_real, synthetic_data=data_synthetic)
-                    print(f"{col} KS Statistic: {ks_statistic}", "Length Real: ", len(data_real),
-                          "Length Synthetic: ", len(data_synthetic))
+                    ks_statistic = KSComplement.compute(
+                        real_data=data_real, synthetic_data=data_synthetic
+                    )
+                    print(
+                        f"{col} KS Statistic: {ks_statistic}",
+                        "Length Real: ",
+                        len(data_real),
+                        "Length Synthetic: ",
+                        len(data_synthetic),
+                    )
                     average_ks.append(ks_statistic)
 
                 average_tv = []
@@ -142,15 +170,23 @@ for method in method_array:
                         print(f"Skipping {col} - column not found in synthetic data")
                         continue
 
-                    if df_real_categorical[col].isna().all() or df_synthetic_categorical[col].isna().all():
+                    if (
+                        df_real_categorical[col].isna().all()
+                        or df_synthetic_categorical[col].isna().all()
+                    ):
                         print(f"Skipping {col} - empty column detected")
                         continue
 
                     data_real = df_real_categorical[col].dropna().astype(str)
                     data_synthetic = df_synthetic_categorical[col].dropna().astype(str)
                     tv_statistic = 1 - calc_hellinger(data_real, data_synthetic)
-                    print(f"{col} TV Statistic: {tv_statistic}", "Length Real: ", len(data_real),
-                          "Length Synthetic: ", len(data_synthetic))
+                    print(
+                        f"{col} TV Statistic: {tv_statistic}",
+                        "Length Real: ",
+                        len(data_real),
+                        "Length Synthetic: ",
+                        len(data_synthetic),
+                    )
                     average_tv.append(tv_statistic)
 
                 average_ks_value = sum(average_ks) / len(average_ks) if average_ks else None
@@ -165,10 +201,16 @@ for method in method_array:
                 results["average_tv"] = average_tv_value
 
                 if average_ks and average_tv:
-                    weighted_ks = sum(average_ks) / len(average_ks) * (
-                            len(average_ks) / (len(average_ks) + len(average_tv)))
-                    weighted_tv = sum(average_tv) / len(average_tv) * (
-                            len(average_tv) / (len(average_ks) + len(average_tv)))
+                    weighted_ks = (
+                        sum(average_ks)
+                        / len(average_ks)
+                        * (len(average_ks) / (len(average_ks) + len(average_tv)))
+                    )
+                    weighted_tv = (
+                        sum(average_tv)
+                        / len(average_tv)
+                        * (len(average_tv) / (len(average_ks) + len(average_tv)))
+                    )
                     print(f"Combined Resemblance: {weighted_tv + weighted_ks}")
                 # endregion
 
@@ -180,21 +222,29 @@ for method in method_array:
                 data_real = df_real["concept:name"].dropna()
                 data_synthetic = df_synthetic["concept:name"].dropna()
                 hellinger_distance_events = calc_hellinger(data_real, data_synthetic)
-                results["tv_statistic_event_distribution"] = (1 - hellinger_distance_events)
+                results["tv_statistic_event_distribution"] = 1 - hellinger_distance_events
                 print("TV Statistic for Event Distribution: ", (1 - hellinger_distance_events))
 
                 # Calculate trace length distribution
                 trace_length_real = calculate_trace_length_distribution(real_event_log)
                 trace_length_synthetic = calculate_trace_length_distribution(synthetic_event_log)
-                hellinger_distance_trace = calc_hellinger(trace_length_real, trace_length_synthetic, input_type="distribution")
-                results["hellinger_distance_trace_length_distribution"] = (1 - hellinger_distance_trace)
-                print("Hellinger Distance for Trace Length Distribution: ", (1 - hellinger_distance_trace))
+                hellinger_distance_trace = calc_hellinger(
+                    trace_length_real, trace_length_synthetic, input_type="distribution"
+                )
+                results["hellinger_distance_trace_length_distribution"] = (
+                    1 - hellinger_distance_trace
+                )
+                print(
+                    "Hellinger Distance for Trace Length Distribution: ",
+                    (1 - hellinger_distance_trace),
+                )
 
                 # Calculate throughput time distribution
                 throughput_time_real = calculate_throughput_time(real_event_log)
                 throughput_time_synthetic = calculate_throughput_time(synthetic_event_log)
-                ks_statistic = KSComplement.compute(real_data=throughput_time_real,
-                                                    synthetic_data=throughput_time_synthetic)
+                ks_statistic = KSComplement.compute(
+                    real_data=throughput_time_real, synthetic_data=throughput_time_synthetic
+                )
                 results["ks_statistic_throughput_time_distribution"] = ks_statistic
                 print("KS Statistic for Throughput Time Distribution: ", ks_statistic)
 
@@ -206,16 +256,16 @@ df_results = pd.DataFrame(df_result_array)
 
 # Calculate the average of the specified columns
 columns_to_average = [
-    'average_ks',
-    'average_tv',
-    'tv_statistic_event_distribution',
-    'hellinger_distance_trace_length_distribution',
-    'ks_statistic_throughput_time_distribution'
+    "average_ks",
+    "average_tv",
+    "tv_statistic_event_distribution",
+    "hellinger_distance_trace_length_distribution",
+    "ks_statistic_throughput_time_distribution",
 ]
 
-df_results['Average'] = df_results[columns_to_average].mean(axis=1)
+df_results["Average"] = df_results[columns_to_average].mean(axis=1)
 
 # Save to Excel
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 filename = f"evaluation_result_{event_log_name}_{timestamp}.xlsx"
 df_results.to_excel(filename, index=False)

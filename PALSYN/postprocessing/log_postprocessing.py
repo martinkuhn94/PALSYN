@@ -1,21 +1,36 @@
+from __future__ import annotations
+
 import datetime
 import sys
+from collections.abc import Sequence
+from xml.etree import ElementTree as StdlibET
 
 import numpy as np
 import pandas as pd
+from defusedxml import ElementTree as SafeET
 from scipy.stats import norm
-import xml.etree.ElementTree as ET
 
-XES_NAMESPACE = 'http://www.xes-standard.org/'
-NS = {'': XES_NAMESPACE}
+XES_NAMESPACE = "http://www.xes-standard.org/"
+NS = {"": XES_NAMESPACE}
 NA_VALUES = {
-    '', 'NA', 'nan', 'NaN', 'null', 'NULL', '<NA>', 'NaT',
-    '&lt;NA&gt;', '&lt;nan&gt;', '&lt;NaN&gt;', '&lt;null&gt;',
-    '&lt;NULL&gt;', '&lt;NA&gt;', '&lt;NaT&gt;'
+    "",
+    "NA",
+    "nan",
+    "NaN",
+    "null",
+    "NULL",
+    "<NA>",
+    "NaT",
+    "&lt;NA&gt;",
+    "&lt;nan&gt;",
+    "&lt;NaN&gt;",
+    "&lt;null&gt;",
+    "&lt;NULL&gt;",
+    "&lt;NaT&gt;",
 }
 
 
-def clean_xes_file(xml_file, output_file):
+def clean_xes_file(xml_file: str, output_file: str) -> None:
     """
     Clean XES file by removing empty strings, NA values, and HTML-encoded NA strings.
 
@@ -23,24 +38,29 @@ def clean_xes_file(xml_file, output_file):
     xml_file (str): Path to input XES file
     output_file (str): Path to output cleaned XES file
     """
-    tree = ET.parse(xml_file)
+    tree = SafeET.parse(xml_file)
     root = tree.getroot()
-    ET.register_namespace('', XES_NAMESPACE)
+    StdlibET.register_namespace("", XES_NAMESPACE)
 
-    for event in root.findall('.//event', NS):
+    for event in root.findall(".//event", NS):
         to_remove = []
         for elem in event:
-            value = elem.get('value', '').strip()
+            value = elem.get("value", "").strip()
             if value.upper() in {x.upper() for x in NA_VALUES}:
                 to_remove.append(elem)
 
         for elem in to_remove:
             event.remove(elem)
 
-    tree.write(output_file, encoding='utf-8', xml_declaration=True)
+    tree.write(output_file, encoding="utf-8", xml_declaration=True)
 
 
-def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch) -> pd.DataFrame:
+def generate_df(
+    synthetic_event_log_sentences: Sequence[Sequence[str]],
+    cluster_dict: dict[str, Sequence[float]],
+    dict_dtypes: dict[str, dict[str, str]],
+    start_epoch: Sequence[float],
+) -> pd.DataFrame:
     """
     Generate a DataFrame from synthetic event log sentences.
 
@@ -55,7 +75,9 @@ def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_
     pd.DataFrame: Generated DataFrame.
     """
     print("Creating DF-Event Log from synthetic Data")
-    transformed_sentences = transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch)
+    transformed_sentences = transform_sentences(
+        synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch
+    )
     df = create_dataframe_from_sentences(transformed_sentences, dict_dtypes)
     df = reorder_and_sort_df(df)
 
@@ -64,11 +86,14 @@ def generate_df(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_
 
 def reorder_and_sort_df(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Sort the DataFrame by 'case:concept:name' and 'time:timestamp' if these columns are present.
-    Make 'case:concept:name' the first column, 'concept:name' the second column, and 'time:timestamp' the third.
+    Sort and re-order standard process columns if they exist.
+
+    The DataFrame is sorted by ``case:concept:name`` and ``time:timestamp`` when
+    both columns are present. Those columns plus ``concept:name`` are then
+    moved to the beginning in the canonical order.
 
     Parameters:
-    df (pd.DataFrame): Input DataFrame to be reordered and sorted.
+    df (pd.DataFrame): DataFrame to be reordered and sorted.
 
     Returns:
     pd.DataFrame: Reordered and sorted DataFrame.
@@ -90,14 +115,15 @@ def reorder_and_sort_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
+def create_start_epoch(start_epoch: Sequence[float]) -> datetime.datetime:
     """
-    Create a start epoch for the synthetic event log generation. The start epoch is generated using a normal
-    distribution with the mean and standard deviation specified in the start_epoch list. The generated epoch is
-    then checked against the min and max bounds. If the value is out of bounds, it is regenerated.
+    Sample a starting epoch constrained by the provided bounds.
+
+    The helper draws from a normal distribution with the supplied mean and
+    standard deviation and retries until the value lies within ``[min, max]``.
 
     Parameters:
-    start_epoch (list[float]): List containing: [mean, standard deviation, min bound, max bound]
+    start_epoch (list[float]): ``[mean, std, min_bound, max_bound]``.
 
     Returns:
     datetime.datetime: Start epoch as a datetime object.
@@ -115,21 +141,31 @@ def create_start_epoch(start_epoch: list[float]) -> datetime.datetime:
     return epoch
 
 
-def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes, start_epoch) -> list[list[str]]:
+def transform_sentences(
+    synthetic_event_log_sentences: Sequence[Sequence[str]],
+    cluster_dict: dict[str, Sequence[float]],
+    dict_dtypes: dict[str, dict[str, str]],
+    start_epoch: Sequence[float],
+) -> list[list[str]]:
     """
-    Transform synthetic event log sentences by processing each word in the sentence and updating the temporary sentence.
+    Convert tokenized sentences into enriched event-level representations.
+
+    Each word is rewritten based on the column metadata and the cluster
+    distributions while timestamps are advanced relative to ``start_epoch``.
 
     Parameters:
-    synthetic_event_log_sentences: List of synthetic event log sentences.
-    cluster_dict: Dictionary of cluster information.
-    dict_dtypes: Dictionary of data types.
-    start_epoch: List containing start epoch information.
+    synthetic_event_log_sentences: Tokenized synthetic sentences.
+    cluster_dict: Dictionary describing generated attribute distributions.
+    dict_dtypes: Attribute datatype configuration from YAML.
+    start_epoch: Statistical bounds for timestamp generation.
 
     Returns:
-    list: List of transformed synthetic event log sentences.
+    list: Processed synthetic event log sentences.
     """
     transformed_sentences = []
-    for sentence, case_id in zip(synthetic_event_log_sentences, range(len(synthetic_event_log_sentences))):
+    for sentence, case_id in zip(
+        synthetic_event_log_sentences, range(len(synthetic_event_log_sentences))
+    ):
         print(
             "\r"
             + "Converting into Event Log "
@@ -139,10 +175,14 @@ def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes
         )
         sys.stdout.flush()
 
-        temp_sentence = ["case:concept:name==" + str(datetime.datetime.now().timestamp()).replace(".", "")]
+        temp_sentence = [
+            "case:concept:name==" + str(datetime.datetime.now().timestamp()).replace(".", "")
+        ]
         epoch = create_start_epoch(start_epoch)
         for word in sentence:
-            temp_sentence, epoch = process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch)
+            temp_sentence, epoch = process_word(
+                word, temp_sentence, dict_dtypes, cluster_dict, epoch
+            )
 
         transformed_sentences.append(temp_sentence)
 
@@ -151,7 +191,13 @@ def transform_sentences(synthetic_event_log_sentences, cluster_dict, dict_dtypes
     return transformed_sentences
 
 
-def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
+def process_word(
+    word: str,
+    temp_sentence: list[str],
+    dict_dtypes: dict[str, dict[str, str]],
+    cluster_dict: dict[str, Sequence[float]],
+    epoch: datetime.datetime,
+) -> tuple[list[str], datetime.datetime]:
     """
     Process a word in the sentence and update the temporary sentence list.
 
@@ -172,7 +218,7 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
         key = parts[0]
         value = "0"
 
-    dtype_mapping = dict_dtypes['attribute_datatypes']
+    dtype_mapping = dict_dtypes["attribute_datatypes"]
     if key in dtype_mapping and key != "time:timestamp":
         if value in cluster_dict:
             generation_input = cluster_dict[value]
@@ -191,27 +237,33 @@ def process_word(word, temp_sentence, dict_dtypes, cluster_dict, epoch):
         timestamp_string = epoch.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
         if timestamp_string == "NaT":
             print("NaT was generated using previous Timestamp")
-            timestamp_string = temp_sentence[-1].split("==")[1]
-            timestamp_string = datetime.datetime.strptime(timestamp_string, "%Y-%m-%dT%H:%M:%S.%f+00:00")
-            timestamp_string = timestamp_string + datetime.timedelta(seconds=1)
+            previous_timestamp = temp_sentence[-1].split("==")[1]
+            recovered_timestamp = datetime.datetime.strptime(
+                previous_timestamp, "%Y-%m-%dT%H:%M:%S.%f+00:00"
+            )
+            recovered_timestamp = recovered_timestamp + datetime.timedelta(seconds=1)
+            timestamp_string = recovered_timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
         temp_sentence.append(f"time:timestamp=={timestamp_string}")
 
     return temp_sentence, epoch
 
 
-def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.DataFrame:
+def create_dataframe_from_sentences(
+    transformed_sentences: Sequence[Sequence[str]], dict_dtypes: dict[str, dict[str, str]]
+) -> pd.DataFrame:
     """
-    Create a DataFrame from the transformed synthetic event log sentences. The DataFrame is created by parsing the
-    transformed sentences and converting the data types of the columns based on the dict_dtypes dictionary. The
-    DataFrame is then sorted by 'case:concept:name' and 'time:timestamp' and the timestamps are interpolated and
-    forward-filled.
+    Build a pandas DataFrame from transformed synthetic sentences.
+
+    The parser reconstructs case-level dictionaries per trace, applies the
+    configured dtypes, sorts traces chronologically, and interpolates missing
+    timestamps.
 
     Parameters:
-    transformed_sentences: List of transformed synthetic event log sentences.
-    dict_dtypes: Dictionary of data types from YAML (nested under 'attribute_datatypes').
+    transformed_sentences: Enriched synthetic sentences.
+    dict_dtypes: Dictionary of attribute dtypes (under ``attribute_datatypes``).
 
     Returns:
-    pd.DataFrame: DataFrame created from the transformed synthetic event log sentences.
+    pd.DataFrame: DataFrame created from the synthetic sentences.
     """
     parsed_data = []
     removed_traces = 0
@@ -219,7 +271,9 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
     for sentence in transformed_sentences:
         try:
             case_dict = {
-                word.split("==")[0]: word.split("==")[1] for word in sentence if word.split("==")[0].startswith("case:")
+                word.split("==")[0]: word.split("==")[1]
+                for word in sentence
+                if word.split("==")[0].startswith("case:")
             }
             event_indices = [i for i, s in enumerate(sentence) if s.startswith("concept:name")]
             event_indices.pop(0)
@@ -237,14 +291,16 @@ def create_dataframe_from_sentences(transformed_sentences, dict_dtypes) -> pd.Da
     for case in parsed_data:
         df = pd.concat([df, pd.DataFrame(case)], ignore_index=True)
 
-    dtype_mapping = dict_dtypes['attribute_datatypes']
+    dtype_mapping = dict_dtypes["attribute_datatypes"]
 
     for key, value in dtype_mapping.items():
         if key in df.columns:
             df[key] = convert_column_dtype(df[key], value)
 
     if "time:timestamp" not in df.columns:
-        df["time:timestamp"] = [pd.Timestamp("2000-01-01").strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")] * len(df)
+        df["time:timestamp"] = [
+            pd.Timestamp("2000-01-01").strftime("%Y-%m-%dT%H:%M:%S.%f+00:00")
+        ] * len(df)
     else:
         df["time:timestamp"] = pd.to_datetime(df["time:timestamp"], errors="coerce")
 
@@ -274,15 +330,16 @@ def convert_column_dtype(column: pd.Series, dtype: str) -> pd.Series:
     """
     type_converters = {
         "int64": lambda col: pd.to_numeric(
-            col.replace(['', 'nan', 'NaN', 'NULL', 'null'], np.nan),
-            errors='coerce'
-        ).astype('Int64'),
+            col.replace(["", "nan", "NaN", "NULL", "null"], np.nan), errors="coerce"
+        ).astype("Int64"),
         "float": lambda col: col.astype(float) if col.name != "time:timestamp" else col.astype(str),
-        "float64": lambda col: col.astype(float) if col.name != "time:timestamp" else col.astype(str),
+        "float64": lambda col: col.astype(float)
+        if col.name != "time:timestamp"
+        else col.astype(str),
         "boolean": lambda col: col.astype(bool),
         "date": lambda col: col.astype(str),
         "string": lambda col: col.astype(str),
-        "object": lambda col: col.astype(str)
+        "object": lambda col: col.astype(str),
     }
 
     converter = type_converters.get(dtype)

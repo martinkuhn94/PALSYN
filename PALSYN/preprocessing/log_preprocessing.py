@@ -1,19 +1,23 @@
-import re
+from __future__ import annotations
+
 import os
+import re
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
 import pm4py
-from sklearn.cluster import KMeans
-from diffprivlib.models import KMeans as DP_KMeans
 from diffprivlib.mechanisms import Laplace
+from diffprivlib.models import KMeans as DP_KMeans
+from sklearn.cluster import KMeans
 from tensorflow_privacy import compute_dp_sgd_privacy_statement
 
-os.environ["LOKY_MAX_CPU_COUNT"] = str(max(os.cpu_count() - 1, 1))
+_CPU_COUNT = os.cpu_count() or 1
+os.environ["LOKY_MAX_CPU_COUNT"] = str(max(_CPU_COUNT - 1, 1))
 
-START_TOKEN = 'START==START'
-END_TOKEN = 'END==concept:name==END'
+START_TOKEN = "START==START"  # noqa: S105 - sentinel token marker
+END_TOKEN = "END==concept:name==END"  # noqa: S105 - sentinel token marker
 
 
 def extract_epsilon_from_string(text: str) -> float:
@@ -32,17 +36,19 @@ def extract_epsilon_from_string(text: str) -> float:
     float: Extracted epsilon value assuming Poisson sampling. Returns None if no match is found.
     """
     epsilon_poisson_match = re.search(r"Epsilon assuming Poisson sampling \(\*\):\s+(\S+)", text)
-    epsilon_poisson = epsilon_poisson_match.group(1) if epsilon_poisson_match else None
+    if epsilon_poisson_match is None:
+        raise ValueError("Could not extract epsilon from privacy statement.")
+    epsilon_poisson = epsilon_poisson_match.group(1)
     return float(epsilon_poisson)
 
 
 def find_noise_multiplier(
-        target_epsilon: float,
-        num_examples: int,
-        batch_size: int,
-        epochs: int,
-        tol: float = 1e-4,
-        max_iter: int = 100
+    target_epsilon: float,
+    num_examples: int,
+    batch_size: int,
+    epochs: int,
+    tol: float = 1e-4,
+    max_iter: int = 100,
 ) -> float:
     """
     Finds optimal noise multiplier for differential privacy using binary search.
@@ -66,7 +72,7 @@ def find_noise_multiplier(
     - DP-KMeans: 25% of target epsilon
     - DP-SGD: 50% of target epsilon
     """
-    delta = 1 / (num_examples ** 1.1)
+    delta = 1 / (num_examples**1.1)
     search_range = {"low": 1e-6, "high": 100}
     noise_multiplier = None
 
@@ -79,7 +85,7 @@ def find_noise_multiplier(
             num_epochs=epochs,
             noise_multiplier=current_noise,
             used_microbatching=False,
-            delta=delta
+            delta=delta,
         )
 
         current_epsilon = extract_epsilon_from_string(privacy_statement)
@@ -96,7 +102,8 @@ def find_noise_multiplier(
         print(
             f"Warning: Noise multiplier could not be found within {max_iter} iterations.\n"
             f"Using highest noise multiplier: {noise_multiplier}\n"
-            f"Consider choosing epsilon values better suited to the dataset and model configurations"
+            "Consider choosing epsilon values better suited to the dataset "
+            "and model configurations"
         )
     else:
         print(
@@ -110,78 +117,54 @@ def find_noise_multiplier(
     return noise_multiplier
 
 
-def calculate_dp_bounds(df: pd.DataFrame, epsilon: float, std_multiplier: float = 2) -> dict:
-    """
-    Calculates differentially private bounds for numerical columns using noisy mean and standard deviation.
-
-    For each numeric column, computes DP bounds using the formula: mean ± (std_multiplier * std).
-    Special handling is applied for timestamp columns to ensure non-negative bounds.
-
-    Parameters:
-    df (pd.DataFrame): Input dataframe with numeric columns
-    epsilon (float): Privacy budget for the bounds calculation, split equally between mean and std
-    std_multiplier (float): Multiplier for standard deviation to determine bound width. Default is 2
-
-    Returns:
-    dict: Dictionary mapping column names to their DP bounds ([lower], [upper])
-
-    Note:
-    - Privacy budget (epsilon) is split equally between mean and standard deviation calculations
-    - Timestamp columns are bounded by [0, noisy_max] to ensure validity
-    """
-    dp_bounds = {}
+def calculate_dp_bounds(
+    df: pd.DataFrame, epsilon: float, std_multiplier: float = 2
+) -> dict[str, tuple[list[float], list[float]]]:
+    """Compute DP bounds for numeric columns using noisy mean/std statistics."""
+    dp_bounds: dict[str, tuple[list[float], list[float]]] = {}
     numeric_cols = df.select_dtypes(include=[np.number]).columns
 
     for col in numeric_cols:
         col_data = df[col].dropna()
 
         if len(col_data) <= 1:
-            dp_bounds[col] = ([np.nan], [np.nan])
+            dp_bounds[col] = ([float("nan")], [float("nan")])
             continue
 
         true_mean = float(col_data.mean())
         true_std = float(col_data.std())
 
         sensitivities = {
-            'mean': true_std / np.sqrt(len(col_data)),
-            'std': true_std / np.sqrt(2 * (len(col_data) - 1))
+            "mean": true_std / np.sqrt(len(col_data)),
+            "std": true_std / np.sqrt(2 * (len(col_data) - 1)),
         }
 
         mechanisms = {
-            'mean': Laplace(epsilon=epsilon / 2, sensitivity=sensitivities['mean']),
-            'std': Laplace(epsilon=epsilon / 2, sensitivity=sensitivities['std'])
+            "mean": Laplace(epsilon=epsilon / 2, sensitivity=sensitivities["mean"]),
+            "std": Laplace(epsilon=epsilon / 2, sensitivity=sensitivities["std"]),
         }
 
-        dp_mean = mechanisms['mean'].randomise(true_mean)
-        dp_std = abs(mechanisms['std'].randomise(true_std))
+        dp_mean = float(mechanisms["mean"].randomise(true_mean))
+        dp_std = float(abs(mechanisms["std"].randomise(true_std)))
 
         if col == "time:timestamp":
-            min_bound = 0
-            max_bound = max(1e-5, dp_mean + (std_multiplier * dp_std))
+            min_bound = 0.0
+            max_bound = float(max(1e-5, dp_mean + (std_multiplier * dp_std)))
             bounds = ([min_bound], [max_bound])
         else:
-            bounds = (
-                [dp_mean - (std_multiplier * dp_std)],
-                [dp_mean + (std_multiplier * dp_std)]
-            )
+            lower = float(dp_mean - (std_multiplier * dp_std))
+            upper = float(dp_mean + (std_multiplier * dp_std))
+            bounds = ([lower], [upper])
 
         dp_bounds[col] = bounds
 
     return dp_bounds
 
 
-def calculate_clusters(df, max_clusters, epsilon=None):
-    """
-    Calculate clusters for each numeric column using either KMeans or DP-KMeans.
-
-    Parameters:
-    df: Pandas DataFrame.
-    max_clusters: Number of maximum clusters.
-    epsilon: Privacy budget for DP-KMeans. If None, uses regular KMeans.
-
-    Returns:
-    tuple: A tuple containing a Pandas DataFrame with cluster labels and a dictionary with cluster information.
-    """
+def calculate_clusters(  # noqa: C901 - clustering has branching logic
+    df: pd.DataFrame, max_clusters: int, epsilon: float | None = None
+) -> tuple[pd.DataFrame, dict[str, list[float]]]:
+    """Cluster numeric columns using KMeans or DP-KMeans and return labels plus metadata."""
     if not isinstance(df, pd.DataFrame):
         raise ValueError("The input must be a pandas DataFrame")
 
@@ -190,12 +173,12 @@ def calculate_clusters(df, max_clusters, epsilon=None):
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns
     df_org = df.copy()
-    df_cluster_list = []
+    df_cluster_list: list[pd.DataFrame] = []
 
-    dp_bounds = None
-    epsilon_k_means = None
+    dp_bounds: dict[str, tuple[list[float], list[float]]] | None = None
+    epsilon_k_means: float | None = None
 
-    if epsilon:
+    if epsilon is not None:
         epsilon_bounds = epsilon * 0.5
         epsilon_k_means = epsilon * 0.5
         dp_bounds = calculate_dp_bounds(df, epsilon_bounds)
@@ -210,10 +193,15 @@ def calculate_clusters(df, max_clusters, epsilon=None):
 
         X = df_clean.values.reshape(-1, 1)
 
-        if epsilon:
-            bounds = dp_bounds[col]
-            clustering = DP_KMeans(n_clusters=n_clusters, epsilon=epsilon_k_means,
-                                   bounds=bounds, random_state=0)
+        if epsilon is not None:
+            if dp_bounds is None or epsilon_k_means is None:
+                raise ValueError(
+                    "Differential privacy bounds must be computed when epsilon is set."
+                )
+            bounds = dp_bounds.get(col, ([float(df_clean.min())], [float(df_clean.max())]))
+            clustering = DP_KMeans(
+                n_clusters=n_clusters, epsilon=epsilon_k_means, bounds=bounds, random_state=0
+            )
         else:
             clustering = KMeans(n_clusters=n_clusters, random_state=0)
 
@@ -231,7 +219,7 @@ def calculate_clusters(df, max_clusters, epsilon=None):
         df_org[col + "_cluster_label"] = label
         df_cluster_list.append(df_org[[col, col + "_cluster_label"]].dropna())
 
-    cluster_dict = {}
+    cluster_dict: dict[str, list[float]] = {}
     for dataframe in df_cluster_list:
         unique_cluster = dataframe[dataframe.columns[1]].unique()
         for cluster in unique_cluster:
@@ -248,27 +236,28 @@ def calculate_clusters(df, max_clusters, epsilon=None):
     return df, cluster_dict
 
 
-def calculate_starting_epoch(
-        df: pd.DataFrame,
-        epsilon: float = None
-) -> list:
+def calculate_starting_epoch(df: pd.DataFrame, epsilon: float | None = None) -> list[float]:
     """
-    Calculate starting epoch statistics for an event log with optional differential privacy.
+    Calculate starting epoch statistics with optional differential privacy.
 
     Parameters:
-    df (pd.DataFrame): Event log DataFrame containing 'case:concept:name' and 'time:timestamp'
-    epsilon (float, optional): Privacy budget for differential privacy. If None, returns non-DP statistics
+    df (pd.DataFrame): Event log containing ``case:concept:name`` and ``time:timestamp``.
+    epsilon (float, optional): Privacy budget. When ``None`` raw statistics are returned.
 
     Returns:
-    list: [Mean, Standard Deviation, Min, Max] of starting epochs
+    list: ``[mean, std, min, max]`` describing the starting epoch distribution.
     """
     if "case:concept:name" not in df or "time:timestamp" not in df:
         raise ValueError("DataFrame must contain 'case:concept:name' and 'time:timestamp' columns")
 
     try:
         df["time:timestamp"] = pd.to_datetime(df["time:timestamp"])
-        starting_epochs = df.sort_values(by="time:timestamp").groupby("case:concept:name")["time:timestamp"].first()
-        starting_epoch_list = starting_epochs.astype(np.int64) // 10 ** 9
+        starting_epochs = (
+            df.sort_values(by="time:timestamp")
+            .groupby("case:concept:name")["time:timestamp"]
+            .first()
+        )
+        starting_epoch_list = starting_epochs.astype(np.int64) // 10**9
 
         if len(starting_epoch_list) == 0:
             raise ValueError("No valid starting timestamps found in the data.")
@@ -285,34 +274,35 @@ def calculate_starting_epoch(
         range_epochs = max_timestamp - starting_epoch_min
 
         sensitivities = {
-            'mean': range_epochs / n_traces,
-            'std': range_epochs / np.sqrt(2 * n_traces)
+            "mean": range_epochs / n_traces,
+            "std": range_epochs / np.sqrt(2 * n_traces),
         }
 
         mechanisms = {
-            'mean': Laplace(epsilon=epsilon / 2, sensitivity=sensitivities['mean']),
-            'std': Laplace(epsilon=epsilon / 2, sensitivity=sensitivities['std'])
+            "mean": Laplace(epsilon=epsilon / 2, sensitivity=sensitivities["mean"]),
+            "std": Laplace(epsilon=epsilon / 2, sensitivity=sensitivities["std"]),
         }
 
-        dp_mean = abs(mechanisms['mean'].randomise(starting_epoch_mean))
-        dp_std = abs(mechanisms['std'].randomise(starting_epoch_std))
+        dp_mean = abs(mechanisms["mean"].randomise(starting_epoch_mean))
+        dp_std = abs(mechanisms["std"].randomise(starting_epoch_std))
 
         return [dp_mean, dp_std, starting_epoch_min, max_timestamp]
 
     except Exception as e:
-        raise ValueError(f"Error calculating {'DP' if epsilon else ''} starting epochs: {str(e)}")
+        raise ValueError(
+            f"Error calculating {'DP' if epsilon else ''} starting epochs: {str(e)}"
+        ) from e
 
 
-def calculate_time_between_events(df: pd.DataFrame) -> list:
+def calculate_time_between_events(df: pd.DataFrame) -> list[float]:
     """
-    Calculate the time between events for each trace in a pandas DataFrame.
+    Calculate per-trace event deltas for a pandas DataFrame.
 
     Parameters:
-    df (pd.DataFrame): A DataFrame representing an event log, expected to contain columns
-                       'case:concept:name' and 'time:timestamp'.
+    df (pd.DataFrame): Event log with ``case:concept:name`` and ``time:timestamp``.
 
     Returns:
-    list: A list of time between events for each trace in the DataFrame, given in seconds as Unix time.
+    list: Time between events (seconds since epoch) for every trace.
     """
     if "case:concept:name" not in df or "time:timestamp" not in df:
         raise ValueError("DataFrame must contain 'case:concept:name' and 'time:timestamp' columns")
@@ -320,9 +310,9 @@ def calculate_time_between_events(df: pd.DataFrame) -> list:
     try:
         df["time:timestamp"] = pd.to_datetime(df["time:timestamp"])
     except Exception as e:
-        raise ValueError(f"Error converting 'time:timestamp' to datetime: {e}")
+        raise ValueError("Error converting 'time:timestamp' to datetime") from e
 
-    time_between_events = []
+    time_between_events: list[float] = []
 
     for _, group in df.groupby("case:concept:name"):
         if len(group) < 2:
@@ -332,42 +322,57 @@ def calculate_time_between_events(df: pd.DataFrame) -> list:
         time_diffs = group["time:timestamp"].diff().dt.total_seconds().copy()
         time_diffs.fillna(0, inplace=True)
         time_diffs.iloc[0] = 0
-        time_between_events.extend(time_diffs)
+        time_between_events.extend(time_diffs.astype(float).tolist())
 
     return time_between_events
 
 
-def get_attribute_dtype_mapping(df: pd.DataFrame) -> dict:
+def get_attribute_dtype_mapping(df: pd.DataFrame) -> dict[str, dict[str, str]]:
     """
-    Get the attribute data type mapping from an Event Log (XES) and return it as dictionary.
-    This is necessary to generate synthetic data, maintaining the correct datatypes from the original data.
+    Determine the attribute datatype mapping from the event log.
 
     Parameters:
-    df (pd.DataFrame): A pandas DataFrame representing an event log, where columns are attributes.
+    df (pd.DataFrame): Event log DataFrame whose columns represent attributes.
 
     Returns:
-    dict: Dictionary containing the attribute data type mapping
+    dict: Column-to-datatype mapping used during generation.
     """
     if not isinstance(df, pd.DataFrame):
         raise TypeError("Input must be a pandas DataFrame")
 
-    dtype_dict = {}
+    dtype_dict: dict[str, str] = {}
 
     for column in df.columns:
         if pd.api.types.is_numeric_dtype(df[column]):
-            if column == 'time:timestamp':
-                dtype_dict[column] = 'float64'
+            if column == "time:timestamp":
+                dtype_dict[column] = "float64"
             elif df[column].dropna().apply(lambda x: float(x).is_integer()).all():
-                dtype_dict[column] = 'int64'
+                dtype_dict[column] = "int64"
             else:
-                dtype_dict[column] = 'float64'
+                dtype_dict[column] = "float64"
         else:
             dtype_dict[column] = df[column].dtype.name
 
-    return {'attribute_datatypes': dtype_dict}
+    return {"attribute_datatypes": dtype_dict}
 
 
-def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon: float, batch_size: int, epochs: int):
+def preprocess_event_log(
+    log: Any,
+    max_clusters: int,
+    trace_quantile: float,
+    epsilon: float | None,
+    batch_size: int,
+    epochs: int,
+) -> tuple[
+    list[list[str]],
+    dict[str, list[float]],
+    dict[str, dict[str, str]],
+    list[float],
+    int,
+    float,
+    int,
+    list[str],
+]:
     """
     Preprocesses event log data with optional differential privacy.
 
@@ -385,7 +390,7 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     try:
         df = pm4py.convert_to_dataframe(log)
     except Exception as e:
-        raise ValueError(f"Error converting log to DataFrame: {e}")
+        raise ValueError("Error converting log to DataFrame") from e
 
     print("Number of traces: " + str(df["case:concept:name"].unique().size))
 
@@ -399,7 +404,7 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
 
     if epsilon is None:
         print("No Epsilon is specified setting noise multiplier to 0")
-        noise_multiplier = 0
+        noise_multiplier = 0.0
         starting_epoch_dist = calculate_starting_epoch(df)
         time_between_events = calculate_time_between_events(df)
         df["time:timestamp"] = time_between_events
@@ -409,8 +414,11 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
         print("Finding Optimal Noise Multiplier")
         epsilon_noise_multiplier = epsilon / 2
         epsilon_k_means = epsilon / 2
-        noise_multiplier = find_noise_multiplier(epsilon_noise_multiplier, num_examples, batch_size, epochs)
-        # Epsilon does not need to be shared here since the first timestamp defines a distinct dataset.
+        noise_multiplier = find_noise_multiplier(
+            epsilon_noise_multiplier, num_examples, batch_size, epochs
+        )
+        # Epsilon does not need to be shared here since the first timestamp defines a
+        # distinct dataset.
         starting_epoch_dist = calculate_starting_epoch(df, epsilon)
         time_between_events = calculate_time_between_events(df)
         df["time:timestamp"] = time_between_events
@@ -422,24 +430,19 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
     ]
     df = df[cols]
 
-    event_log_sentence_list = []
+    event_log_sentence_list: list[list[str]] = []
     total_traces = df["case:concept:name"].nunique()
 
     num_cols = len(df.columns) - 1
     column_list = df.columns.tolist()
 
-    if 'case:concept:name' in column_list:
-        column_list.remove('case:concept:name')
+    if "case:concept:name" in column_list:
+        column_list.remove("case:concept:name")
 
     # Pre-filter global attributes once
     global_attributes = [
-        col for col in df.columns
-        if col.startswith("case:") and col != "case:concept:name"
+        col for col in df.columns if col.startswith("case:") and col != "case:concept:name"
     ]
-
-    # Pre-calculate total traces
-    total_traces = df['case:concept:name'].nunique()
-    event_log_sentence_list = []
 
     # Use groupby instead of filtering for each trace
     for i, (_, trace_group) in enumerate(df.groupby("case:concept:name"), 1):
@@ -451,22 +454,23 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
         trace_sentence_list = [START_TOKEN] * num_cols
 
         # Handle global attributes (case: attributes)
-        trace_sentence_list.extend([
-            f"{attr}=={str(trace_group[attr].iloc[0])}"
-            for attr in global_attributes
-        ])
+        trace_sentence_list.extend(
+            [f"{attr}=={str(trace_group[attr].iloc[0])}" for attr in global_attributes]
+        )
 
         # Process trace events - drop case:concept:name once
-        trace_data = trace_group.drop(columns=['case:concept:name'])
+        trace_data = trace_group.drop(columns=["case:concept:name"])
         concept_names = trace_data["concept:name"].values
 
         # Process each event in the trace
         for idx, row in enumerate(trace_data.values):
             concept_name = concept_names[idx]
-            trace_sentence_list.extend([
-                f"{concept_name}=={col}=={str(val) if pd.notna(val) else 'nan'}"
-                for col, val in zip(trace_data.columns, row)
-            ])
+            trace_sentence_list.extend(
+                [
+                    f"{concept_name}=={col}=={str(val) if pd.notna(val) else 'nan'}"
+                    for col, val in zip(trace_data.columns, row)
+                ]
+            )
 
         trace_sentence_list.extend([END_TOKEN] * num_cols)
         event_log_sentence_list.append(trace_sentence_list)
@@ -483,5 +487,5 @@ def preprocess_event_log(log, max_clusters: int, trace_quantile: float, epsilon:
         num_examples,
         noise_multiplier,
         num_cols,
-        column_list
+        column_list,
     )

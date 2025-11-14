@@ -1,14 +1,21 @@
-import time
+from __future__ import annotations
+
 import random
-from typing import Any, Dict, Iterable, List, Tuple
+import time
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 from keras import backend as K
 from keras.utils import pad_sequences
-from PALSYN.preprocessing.log_preprocessing import START_TOKEN, END_TOKEN
+
+from PALSYN.preprocessing.log_preprocessing import END_TOKEN, START_TOKEN
+
+FloatArray = npt.NDArray[np.float_]
 
 
-def clean_sequence(sequence: List[str], max_length: int) -> List[str]:
+def clean_sequence(sequence: list[str], max_length: int) -> list[str]:
     """Clean a generated token sequence.
 
     Removes special markers, strips event concept prefixes, and preserves
@@ -30,7 +37,7 @@ def clean_sequence(sequence: List[str], max_length: int) -> List[str]:
     if len(sequence) >= max_length:
         return []
 
-    trace: List[str] = [START_TOKEN]
+    trace: list[str] = [START_TOKEN]
     for word in sequence:
         if not word or word in {START_TOKEN, END_TOKEN}:
             continue
@@ -43,7 +50,9 @@ def clean_sequence(sequence: List[str], max_length: int) -> List[str]:
     return trace
 
 
-def _build_token_index_maps(index_word: Dict[int, str], columns: Iterable[str]) -> Tuple[Dict[str, List[int]], Dict[Tuple[str, str], List[int]]]:
+def _build_token_index_maps(
+    index_word: dict[int, str], columns: Iterable[str]
+) -> tuple[dict[str, list[int]], dict[tuple[str, str], list[int]]]:
     """Build lookup tables of token indices by column and by (concept, column).
 
     Args:
@@ -58,8 +67,8 @@ def _build_token_index_maps(index_word: Dict[int, str], columns: Iterable[str]) 
           indices whose token contains `"{concept}=={column}=="`.
     """
     col_set = set(columns)
-    by_column: Dict[str, List[int]] = {c: [] for c in col_set}
-    by_concept_and_column: Dict[Tuple[str, str], List[int]] = {}
+    by_column: dict[str, list[int]] = {c: [] for c in col_set}
+    by_concept_and_column: dict[tuple[str, str], list[int]] = {}
 
     for idx, token in index_word.items():
         for col in col_set:
@@ -72,7 +81,7 @@ def _build_token_index_maps(index_word: Dict[int, str], columns: Iterable[str]) 
     return by_column, by_concept_and_column
 
 
-def _safe_normalize(arr: np.ndarray) -> np.ndarray:
+def _safe_normalize(arr: FloatArray) -> FloatArray:
     """Normalize an array to a probability distribution.
 
     If the input sums to zero (or is empty), returns a uniform distribution to
@@ -92,15 +101,15 @@ def _safe_normalize(arr: np.ndarray) -> np.ndarray:
     return np.full(n, 1.0 / n, dtype=float)
 
 
-def sample_batch(
+def sample_batch(  # noqa: C901 - generation loop is inherently branching-heavy
     sample_size: int,
     tokenizer: Any,
     max_sequence_len: int,
     model: Any,
     batch_size: int,
     num_cols: int,
-    column_list: List[str],
-) -> List[List[str]]:
+    column_list: list[str],
+) -> list[list[str]]:
     """Generate synthetic sequences using conditional per-column sampling.
 
     At each step, samples one token per column, constraining event-level
@@ -130,10 +139,12 @@ def sample_batch(
 
     effective_batch_size = max(int(batch_size), int(sample_size))
 
-    seed_sequences: List[List[str]] = [[START_TOKEN] * num_cols for _ in range(effective_batch_size)]
+    seed_sequences: list[list[str]] = [
+        [START_TOKEN] * num_cols for _ in range(effective_batch_size)
+    ]
     active_mask = np.ones(effective_batch_size, dtype=bool)
 
-    index_word: Dict[int, str] = {index: word for word, index in tokenizer.word_index.items()}
+    index_word: dict[int, str] = {index: word for word, index in tokenizer.word_index.items()}
 
     tokens_by_column, tokens_by_concept_column = _build_token_index_maps(index_word, column_list)
 
@@ -155,10 +166,11 @@ def sample_batch(
         token_lists = [tokenizer.texts_to_sequences([seq])[0] for seq in seed_sequences]
         padded = pad_sequences(token_lists, maxlen=max_sequence_len, padding="pre")
 
-        try:
-            model.reset_states()
-        except Exception:
-            pass
+        if hasattr(model, "reset_states"):
+            try:
+                model.reset_states()
+            except Exception as exc:
+                print(f"Warning: Unable to reset model states: {exc}")
 
         predictions = model.predict(padded, verbose=0)
 
@@ -167,7 +179,7 @@ def sample_batch(
                 continue
 
             current_concept: str | None = None
-            step_tokens: List[str] = []
+            step_tokens: list[str] = []
 
             for output_probs, column in zip(predictions, column_list):
                 probs = _safe_normalize(output_probs[i])
@@ -182,7 +194,9 @@ def sample_batch(
                     update_progress()
                     break
 
-                cand_probs = _safe_normalize(np.array([probs[idx] for idx in candidates], dtype=float))
+                cand_probs = _safe_normalize(
+                    np.array([probs[idx] for idx in candidates], dtype=float)
+                )
 
                 next_index = np.random.choice(candidates, p=cand_probs)
                 next_word = index_word.get(int(next_index), END_TOKEN)
@@ -205,7 +219,7 @@ def sample_batch(
     K.clear_session()
 
     max_len_cutoff = int(round(max_sequence_len * 1.5))
-    cleaned: List[List[str]] = [
+    cleaned: list[list[str]] = [
         clean_sequence(sentence, max_len_cutoff)
         for sentence in seed_sequences
         if len(sentence) < max_len_cutoff

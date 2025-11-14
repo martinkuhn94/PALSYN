@@ -1,8 +1,20 @@
+from __future__ import annotations
+
 import time
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
-from keras.callbacks import Callback
+from keras.callbacks import Callback as _RuntimeCallback
+
+if TYPE_CHECKING:
+    class Callback(_RuntimeCallback):
+        params: dict[str, Any]
+        model: Any
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+
+else:  # pragma: no cover - runtime import for actual callback behavior
+    Callback = _RuntimeCallback
 
 
 class MetricsLogger(Callback):
@@ -16,15 +28,16 @@ class MetricsLogger(Callback):
         column_list: Original output names; sanitized for metric keys.
     """
 
-    def __init__(self, num_cols: int, column_list: List[str]) -> None:
-        super().__init__()
+    def __init__(self, num_cols: int, column_list: list[str]) -> None:
+        if not TYPE_CHECKING:
+            super().__init__()
         self.num_cols = int(num_cols)
         self.column_list = [str(col).replace(":", "_").replace(" ", "_") for col in column_list]
-        self.history: List[Dict[str, Any]] = []
+        self.history: list[dict[str, Any]] = []
         self._supports_tf_logs = False
 
-    def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, Any]] = None) -> None:
-        epoch_metrics: Dict[str, Any] = {"epoch": epoch + 1}
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any] | None = None) -> None:
+        epoch_metrics: dict[str, Any] = {"epoch": epoch + 1}
         logs = logs or {}
 
         for i in range(self.num_cols):
@@ -63,14 +76,15 @@ class CustomProgressBar(Callback):
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        if not TYPE_CHECKING:
+            super().__init__()
         self.last_update: float = 0.0
         self.start_time: float = 0.0
-        self.target: Optional[int] = None
+        self.target: int | None = None
         self.seen: int = 0
         self._last_line_len: int = 0
 
-    def on_epoch_begin(self, epoch: int, logs: Optional[Dict[str, Any]] = None) -> None:
+    def on_epoch_begin(self, epoch: int, logs: dict[str, Any] | None = None) -> None:
         print(f"\nEpoch {epoch + 1}/{self.params.get('epochs', '?')}")
         self.seen = 0
         steps = self.params.get("steps")
@@ -85,7 +99,7 @@ class CustomProgressBar(Callback):
         self.last_update = now
         self._last_line_len = 0
 
-    def on_batch_end(self, batch: int, logs: Optional[Dict[str, Any]] = None) -> None:
+    def on_batch_end(self, batch: int, logs: dict[str, Any] | None = None) -> None:
         self.seen += 1
         if not self.target or self.target <= 0:
             return
@@ -112,7 +126,7 @@ class CustomProgressBar(Callback):
         print("\r" + line + pad, end="", flush=True)
         self._last_line_len = len(line)
 
-    def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, Any]] = None) -> None:
+    def on_epoch_end(self, epoch: int, logs: dict[str, Any] | None = None) -> None:
         total = max(time.time() - self.start_time, 0.0)
         if total < 60:
             time_str = f"{total:.0f}s"
@@ -121,7 +135,9 @@ class CustomProgressBar(Callback):
         else:
             time_str = f"{int(total // 3600)}h {int((total % 3600) // 60)}m"
         if self.target:
-            final_line = f"{self.target}/{self.target} [==============================] - {time_str}"
+            final_line = (
+                f"{self.target}/{self.target} [==============================] - {time_str}"
+            )
         else:
             final_line = f"- {time_str}"
         pad = " " * max(self._last_line_len - len(final_line), 0)
