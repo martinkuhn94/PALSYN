@@ -1,0 +1,133 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "palsyn"
+version = "0.0.3"
+description = "Private Autoregressive Log Synthesizer (PALSYN)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Martin Kuhn", email = "martin.kuhn@dfki.de" }]
+dependencies = [
+  "pandas==1.5.3",
+  "numpy==1.23.5",
+  "tensorflow==2.14.0",
+  "scipy==1.12.0",
+  "keras==2.14.0",
+  "pm4py==2.5.2",
+  "scikit-learn==1.5.0",
+  "tensorflow_privacy==0.9.0",
+  "openpyxl==3.1.2",
+  "defusedxml>=0.7.1",
+  "diffprivlib~=0.6.5",
+  "setuptools~=70.0.0",
+  "pyyaml==6.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ruff>=0.6.0",
+  "mypy>=1.11.0",
+  "pytest>=8.0.0",
+  "coverage>=7.6.0",
+  "types-PyYAML>=6.0.12",
+  "pandas-stubs>=2.3.2.250926",
+  "types-setuptools>=80.0.0.0",
+  "types-defusedxml>=0.7.0.0",
+  "scipy-stubs>=1.11.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/martinkuhn94/PALSYN"
+Repository = "https://github.com/martinkuhn94/PALSYN"
+
+[tool.setuptools.packages.find]
+include = ["PALSYN*"]
+
+# ---------- Ruff (linter + formatter) ----------
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  "E","F","W",   # basic errors / style
+  "B","B9",      # bugbear: common footguns
+  "C90",         # complexity
+  "I",           # import sorting
+  "UP",          # modern syntax
+  "S",           # basic security checks
+]
+ignore = [
+  "E203",        # harmless; Black-compat; also fine with ruff format
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.format]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # allow `assert` in tests
+
+# ---------- mypy ----------
+[tool.mypy]
+python_version = "3.9"
+strict = true
+warn_unused_configs = true
+warn_return_any = true
+disallow_any_generics = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_subclassing_any = false
+
+[[tool.mypy.overrides]]
+module = [
+  "tensorflow",
+  "tensorflow.*",
+  "tensorflow_privacy",
+  "tensorflow_privacy.*",
+  "keras",
+  "keras.*",
+  "pm4py",
+  "pm4py.*",
+  "sklearn",
+  "sklearn.*",
+  "pandas",
+  "pandas.*",
+  "defusedxml",
+  "defusedxml.*",
+  "scipy",
+  "scipy.*",
+  "setuptools",
+  "setuptools.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "diffprivlib",
+  "diffprivlib.*",
+  "sdmetrics",
+  "sdmetrics.*",
+]
+ignore_missing_imports = true
+
+# ---------- pytest ----------
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+# ---------- coverage ----------
+[tool.coverage.run]
+branch = true
+source = ["PALSYN"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

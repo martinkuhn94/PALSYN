@@ -1,4 +1,4 @@
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 setup(
     name="PBLES",
@@ -18,7 +18,9 @@ setup(
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
     ],
-    keywords="Event Log Synthetization, Differential Privacy, Sequence Models, Synthetic Data Generation",
+    keywords=(
+        "Event Log Synthetization, Differential Privacy, Sequence Models, Synthetic Data Generation"
+    ),
     install_requires=[
         "pandas==1.5.3",
         "numpy==1.23.5",
@@ -29,6 +31,7 @@ setup(
         "scikit-learn==1.4.1.post1",
         "tensorflow_privacy==0.9.0",
         "openpyxl==3.1.2",
+        "defusedxml>=0.7.1",
     ],
     python_requires=">=3.9",
 )
