@@ -200,19 +200,24 @@ class DPEventLogSynthesizer:
             output = Dense(self.total_words, activation="softmax", name=f"{self.modified_column_list[step]}")(x)
             outputs.append(output)
 
-        dp_optimizer = DPKerasAdamOptimizer(
-            l2_norm_clip=self.l2_norm_clip,
-            noise_multiplier=self.noise_multiplier,
-            num_microbatches=1,
-            learning_rate=self.learning_rate,
-        )
-
         self.model = Model(inputs=inputs, outputs=outputs)
+        optimizer = self._build_optimizer()
         self.model.compile(
             loss=["sparse_categorical_crossentropy"] * self.num_cols,
-            optimizer=dp_optimizer,
+            optimizer=optimizer,
             metrics=["accuracy"],
         )
+
+    def _build_optimizer(self):
+        """Return a DP optimizer only when noise is required."""
+        if self.noise_multiplier is not None and self.noise_multiplier > 0:
+            return DPKerasAdamOptimizer(
+                l2_norm_clip=self.l2_norm_clip,
+                noise_multiplier=self.noise_multiplier,
+                num_microbatches=1,
+                learning_rate=self.learning_rate,
+            )
+        return tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
 
     def train(self, epochs: Optional[int] = None) -> None:
         """Train the model with early stopping, metrics logging, and optional checkpoints.
