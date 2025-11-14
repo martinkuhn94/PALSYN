@@ -1,6 +1,7 @@
 import pm4py
-from PALSYN.synthesizer import DPEventLogSynthesizer
+
 from PALSYN.postprocessing.log_postprocessing import clean_xes_file
+from PALSYN.synthesizer import DPEventLogSynthesizer
 
 # Load Model
 palsyn_model = DPEventLogSynthesizer()

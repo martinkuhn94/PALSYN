@@ -19,38 +19,51 @@ A detailed explanation of the algorithm and its workings can be found in our pre
 - **Differential Privacy:** Ensures privacy by incorporating differential privacy techniques.
 
 ## Installation
-PALSYN can be installed by cloning the repository and installing the necessary dependencies.
+Choose the workflow that best matches your setup.
 
-
-### Installation with Git
-
-To install PALSYN by cloning the repository, follow these steps.
-
-Clone the repository:
+### 1. Minimal Runtime (requirements.txt)
 ```bash
 git clone https://github.com/martinkuhn94/PALSYN.git
-
-
-Install the required dependencies:
-
-```bash
+cd PALSYN
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+### 2. Editable Install (`pip install .`)
+```bash
+git clone https://github.com/martinkuhn94/PALSYN.git
+cd PALSYN
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install .
+```
+
+### 3. Development Environment (`pip install -e .[dev]`)
+```bash
+git clone https://github.com/martinkuhn94/PALSYN.git
+cd PALSYN
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -e .[dev]
+```
+This third option installs tooling such as Ruff, mypy, pytest, coverage, and type stubs that are referenced in `pyproject.toml`.
+
 ## Usage
 
-### Training the Model 
-For the training of the model, the stacked layers are configured with 32, 16 and 8 LSTM units respectively, and an embedding dimension of 16. The model trains for 3 epochs with a batch size of 16. The number of clusters for numerical attributes is set to 10, and to speed up the training, only the top 50% quantile of traces by length are considered, in this example. The noise multiplier is set to 0.0, which means that the model is trained without differential privacy. To train the model with differential privacy, set the noise multiplier to a value greater than 0.0. The epsilon value can be retrieved after training the model.
-```bash
+### Training the Model
+The example below mirrors `train_example.py`. It trains a Bi-LSTM with 128-dimensional embeddings, two recurrent layers (32/16 units), dropout, and a 90th percentile trace filter.
+
+```python
 import pm4py
 from PALSYN.synthesizer import DPEventLogSynthesizer
 
-
-# Read Event Log Road_Traffic_Fine_Management_Process.xes
 xes_file_path = "example_logs/Road_Traffic_Fine_Management_Process_short.xes"
 event_log = pm4py.read_xes(xes_file_path)
 
-# Initialize Model
 palsyn_model = DPEventLogSynthesizer(
     embedding_output_dims=128,
     epochs=5,
@@ -60,41 +73,35 @@ palsyn_model = DPEventLogSynthesizer(
     trace_quantile=0.9,
     l2_norm_clip=1.0,
     method="Bi-LSTM",
-    units_per_layer=[32, 16]
+    units_per_layer=[32, 16],
 )
 
-# Train Model
 palsyn_model.fit(event_log)
 palsyn_model.save_model("models/Bi-LSTM_Road_Fines_u=32_e=inf")
-
 ```
 
-### Sampling Event Logs 
-To sample synthetic event logs, use the following example with a trained model can be used. The sample size is set to 160, and the batch size is set to 16. The synthetic event log is saved as a XES file.
-Pretrained models can be found in the "models" folder.
-```bash
-import pm4py
-from PALSYN.synthesizer import DPEventLogSynthesizer
-from PALSYN.postprocessing.log_postprocessing import clean_xes_file
+### Sampling Event Logs
+After training or loading a saved model, sample synthetic traces and export them to XES/Excel as shown in `sampling_example.py`.
 
-# Load Model
+```python
+import pm4py
+
+from PALSYN.postprocessing.log_postprocessing import clean_xes_file
+from PALSYN.synthesizer import DPEventLogSynthesizer
+
 palsyn_model = DPEventLogSynthesizer()
 palsyn_model.load("models/Bi-LSTM_Road_Fines_u=32_e=inf")
 
-# Sample
 event_log = palsyn_model.sample(sample_size=5600, batch_size=100)
 event_log_xes = pm4py.convert_to_event_log(event_log)
 
-# Save as XES File
 xes_filename = "road_fines_e=inf.xes"
 pm4py.write_xes(event_log_xes, xes_filename)
 clean_xes_file(xes_filename, xes_filename)
 
-# Save as XSLX File for quick inspection
 df = pm4py.convert_to_dataframe(event_log_xes)
 df["time:timestamp"] = df["time:timestamp"].astype(str)
 df.to_excel("road_fines_e=inf.xlsx", index=False)
-
 ```
 
 ## Future Work
