@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from datetime import datetime
 from typing import Any
 
@@ -35,11 +36,17 @@ def extract_epsilon_from_string(text: str) -> float:
     Returns:
     float: Extracted epsilon value assuming Poisson sampling. Returns None if no match is found.
     """
-    epsilon_poisson_match = re.search(r"Epsilon assuming Poisson sampling \(\*\):\s+(\S+)", text)
-    if epsilon_poisson_match is None:
-        raise ValueError("Could not extract epsilon from privacy statement.")
-    epsilon_poisson = epsilon_poisson_match.group(1)
-    return float(epsilon_poisson)
+    pattern = re.compile(
+        r"Epsilon assuming Poisson sampling \(\*\):\s*([0-9]+(?:\.[0-9]+)?(?:[eE][+-]?\d+)?)"
+    )
+    match = pattern.search(text)
+    if match is None:
+        warnings.warn(
+            "Could not extract epsilon from privacy statement; defaulting to 0.0.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return float(match.group(1)) if match else 0.0
 
 
 def find_noise_multiplier(
@@ -49,6 +56,7 @@ def find_noise_multiplier(
     epochs: int,
     tol: float = 1e-4,
     max_iter: int = 100,
+    privacy_statement_fn=None,
 ) -> float:
     """
     Finds optimal noise multiplier for differential privacy using binary search.
@@ -72,49 +80,51 @@ def find_noise_multiplier(
     - DP-KMeans: 25% of target epsilon
     - DP-SGD: 50% of target epsilon
     """
+    if target_epsilon <= 0 or tol <= 0 or max_iter <= 0:
+        raise ValueError("target_epsilon, tol, and max_iter must be positive.")
+    if num_examples <= 0 or batch_size <= 0 or epochs <= 0:
+        raise ValueError("num_examples, batch_size, and epochs must be positive.")
+
     delta = 1 / (num_examples**1.1)
-    search_range = {"low": 1e-6, "high": 100}
-    noise_multiplier = None
+    low, high = 1e-6, 100.0
+    best_noise = None
 
-    for _ in range(max_iter):
-        current_noise = (search_range["low"] + search_range["high"]) / 2
+    if privacy_statement_fn is None:
+        privacy_statement_fn = compute_dp_sgd_privacy_statement
 
-        privacy_statement = compute_dp_sgd_privacy_statement(
+    def epsilon_for_noise(noise: float) -> float:
+        statement = privacy_statement_fn(
             number_of_examples=num_examples,
             batch_size=batch_size,
             num_epochs=epochs,
-            noise_multiplier=current_noise,
+            noise_multiplier=noise,
             used_microbatching=False,
             delta=delta,
         )
+        return extract_epsilon_from_string(statement)
 
-        current_epsilon = extract_epsilon_from_string(privacy_statement)
-        epsilon_difference = abs(current_epsilon - target_epsilon)
+    for _ in range(max_iter):
+        current_noise = (low + high) / 2.0
+        current_epsilon = epsilon_for_noise(current_noise)
 
-        if epsilon_difference <= tol:
-            noise_multiplier = current_noise
+        if abs(current_epsilon - target_epsilon) <= tol:
+            best_noise = current_noise
             break
 
-        search_range["low" if current_epsilon > target_epsilon else "high"] = current_noise
+        if current_epsilon > target_epsilon:
+            low = current_noise
+        else:
+            high = current_noise
 
-    if noise_multiplier is None:
-        noise_multiplier = search_range["high"]
-        print(
-            f"Warning: Noise multiplier could not be found within {max_iter} iterations.\n"
-            f"Using highest noise multiplier: {noise_multiplier}\n"
-            "Consider choosing epsilon values better suited to the dataset "
-            "and model configurations"
+    if best_noise is None:
+        warnings.warn(
+            "Noise multiplier search did not converge; returning upper bound.",
+            RuntimeWarning,
+            stacklevel=2,
         )
-    else:
-        print(
-            f"Optimal Noise multiplier found: {noise_multiplier}\n"
-            f"Privacy budget distribution:\n"
-            f"- DP Bounds: {target_epsilon * 0.5}\n"
-            f"- DP-KMeans: {target_epsilon * 0.5}\n"
-            f"- DP-SGD: {target_epsilon}"
-        )
+        return high
 
-    return noise_multiplier
+    return best_noise
 
 
 def calculate_dp_bounds(
