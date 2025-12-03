@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import pickle
 import random
-from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -13,19 +12,7 @@ import tensorflow as tf
 import yaml
 from keras import Input, Model
 from keras.callbacks import EarlyStopping, ModelCheckpoint
-from keras.layers import (
-    GRU,
-    LSTM,
-    RNN,
-    BatchNormalization,
-    Bidirectional,
-    Conv1D,
-    Dense,
-    Dropout,
-    Embedding,
-    Lambda,
-    SimpleRNN,
-)
+from keras.layers import BatchNormalization, Dense, Dropout, Embedding
 
 try:
     from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (
@@ -47,6 +34,7 @@ except Exception:
             ) from exc
 
 from PALSYN.metrics_logger import CustomProgressBar, MetricsLogger
+from PALSYN.models import Encoder, get_custom_objects, get_encoder_class
 from PALSYN.postprocessing.log_postprocessing import generate_df
 from PALSYN.preprocessing.log_preprocessing import preprocess_event_log
 from PALSYN.preprocessing.log_tokenization import tokenize_log
@@ -61,90 +49,6 @@ def _load_pickle_file(file_path: str) -> Any:
 IntArray = npt.NDArray[np.int_]
 
 
-@tf.keras.utils.register_keras_serializable(package="palsyn")
-class LiquidTimeConstantCell(tf.keras.layers.AbstractRNNCell):
-    """Simple liquid neural network cell with learnable time constants."""
-
-    def __init__(
-        self,
-        units: int,
-        tau_min: float = 0.1,
-        tau_max: float = 2.0,
-        connectivity: float = 0.3,
-        activation: str = "tanh",
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(**kwargs)
-        self.units = int(units)
-        self.tau_min = max(float(tau_min), 1e-3)
-        self.tau_max = max(float(tau_max), self.tau_min + 1e-3)
-        self.connectivity = float(np.clip(connectivity, 0.0, 1.0))
-        self.activation_fn = tf.keras.activations.get(activation)
-        self._recurrent_mask: tf.Tensor | None = None
-
-    @property
-    def state_size(self) -> int:
-        return self.units
-
-    @property
-    def output_size(self) -> int:
-        return self.units
-
-    def build(self, input_shape: Sequence[int]) -> None:
-        input_dim = int(input_shape[-1])
-        kernel_init = tf.keras.initializers.GlorotUniform()
-        recurrent_init = tf.keras.initializers.Orthogonal()
-        tau_init = tf.keras.initializers.RandomUniform(self.tau_min, self.tau_max)
-
-        self.input_kernel = self.add_weight(
-            shape=(input_dim, self.units),
-            initializer=kernel_init,
-            name="input_kernel",
-        )
-        self.recurrent_kernel = self.add_weight(
-            shape=(self.units, self.units),
-            initializer=recurrent_init,
-            name="recurrent_kernel",
-        )
-        self.bias = self.add_weight(
-            shape=(self.units,),
-            initializer="zeros",
-            name="bias",
-        )
-        self.time_constants = self.add_weight(
-            shape=(self.units,),
-            initializer=tau_init,
-            name="time_constants",
-        )
-
-        if self.connectivity < 1.0:
-            mask = (np.random.rand(self.units, self.units) < self.connectivity).astype("float32")
-            self._recurrent_mask = tf.constant(mask)
-        else:
-            self._recurrent_mask = None
-
-        super().build(input_shape)
-
-    def call(
-        self, inputs: tf.Tensor, states: Sequence[tf.Tensor]
-    ) -> tuple[tf.Tensor, list[tf.Tensor]]:
-        prev_state = states[0]
-        effective_kernel = self.recurrent_kernel
-        if self._recurrent_mask is not None:
-            effective_kernel = effective_kernel * self._recurrent_mask
-
-        input_term = tf.matmul(inputs, self.input_kernel)
-        recurrent_term = tf.matmul(prev_state, effective_kernel)
-        pre_activation = input_term + recurrent_term + self.bias
-        if self.activation_fn is not None:
-            pre_activation = self.activation_fn(pre_activation)
-
-        tau = tf.nn.softplus(self.time_constants) + 1e-3
-        delta = (pre_activation - prev_state) / tau
-        next_state = prev_state + delta
-        return next_state, [next_state]
-
-
 class DPEventLogSynthesizer:
     """Differentially private sequence model for event log synthesis.
 
@@ -154,7 +58,7 @@ class DPEventLogSynthesizer:
 
     Args:
         embedding_output_dims: Size of the embedding vectors.
-        method: Encoder type ("LSTM", "Bi-LSTM", "GRU", "Bi-GRU", "RNN", "Bi-RNN", "TCN", "LNN").
+        method: Encoder type ("LSTM", "Bi-LSTM", "GRU", "Bi-GRU", "RNN", "Bi-RNN", "TCN", "LNN", "Conformer", "WaveNet", "ESN", "Transformer").
         units_per_layer: Hidden units per recurrent layer.
         epochs: Default number of training epochs.
         batch_size: Training batch size.
@@ -170,6 +74,21 @@ class DPEventLogSynthesizer:
         liquid_tau_min: Minimum learnable time constant for liquid cells.
         liquid_tau_max: Maximum learnable time constant for liquid cells.
         liquid_connectivity: Fraction of recurrent connections kept in liquid cells.
+        conformer_num_heads: Attention heads per Conformer block.
+        conformer_ff_multiplier: Expansion factor for Conformer feed-forward layers.
+        conformer_conv_kernel_size: Kernel size for Conformer convolution modules.
+        conformer_dropout: Dropout applied within Conformer blocks.
+        wavenet_kernel_size: Kernel size for dilated convolutions in WaveNet blocks.
+        wavenet_dilation_base: Multiplicative factor for the dilation schedule.
+        wavenet_skip_channels: Number of channels used for the WaveNet skip pathway.
+        esn_spectral_radius: Target spectral radius for the ESN reservoir weights.
+        esn_input_scaling: Scaling applied to ESN input connections.
+        esn_leak_rate: Leak rate controlling ESN state updates.
+        esn_bias_scale: Range of random biases applied to ESN units.
+        esn_activation: Activation function used within the ESN reservoir.
+        transformer_num_heads: Attention heads per Transformer block.
+        transformer_ff_multiplier: Expansion factor for Transformer feed-forward layers.
+        transformer_dropout: Dropout applied within Transformer blocks.
     """
 
     def __init__(
@@ -191,6 +110,21 @@ class DPEventLogSynthesizer:
         liquid_tau_min: float = 0.1,
         liquid_tau_max: float = 2.0,
         liquid_connectivity: float = 0.3,
+        conformer_num_heads: int = 4,
+        conformer_ff_multiplier: float = 4.0,
+        conformer_conv_kernel_size: int = 15,
+        conformer_dropout: float = 0.1,
+        wavenet_kernel_size: int = 2,
+        wavenet_dilation_base: int = 2,
+        wavenet_skip_channels: int | None = None,
+        esn_spectral_radius: float = 0.9,
+        esn_input_scaling: float = 0.1,
+        esn_leak_rate: float = 1.0,
+        esn_bias_scale: float = 0.0,
+        esn_activation: str = "tanh",
+        transformer_num_heads: int = 4,
+        transformer_ff_multiplier: float = 4.0,
+        transformer_dropout: float = 0.1,
     ) -> None:
         self.modified_column_list: list[str] = []
         self.metrics_df: pd.DataFrame | None = None
@@ -216,7 +150,20 @@ class DPEventLogSynthesizer:
         ):
             raise ValueError("units_per_layer must be a list of positive ints")
 
-        allowed_methods = {"LSTM", "Bi-LSTM", "GRU", "Bi-GRU", "RNN", "Bi-RNN", "TCN", "LNN"}
+        allowed_methods = {
+            "LSTM",
+            "Bi-LSTM",
+            "GRU",
+            "Bi-GRU",
+            "RNN",
+            "Bi-RNN",
+            "TCN",
+            "LNN",
+            "Conformer",
+            "WaveNet",
+            "ESN",
+            "Transformer",
+        }
         if method not in allowed_methods:
             raise ValueError(f"method must be one of {sorted(allowed_methods)}")
         self.method = method
@@ -227,6 +174,23 @@ class DPEventLogSynthesizer:
         self.learning_rate = learning_rate
         self.validation_split = validation_split
         self.checkpoint_path = checkpoint_path
+        self.conformer_num_heads = max(1, int(conformer_num_heads))
+        self.conformer_ff_multiplier = max(float(conformer_ff_multiplier), 1.0)
+        self.conformer_conv_kernel_size = max(1, int(conformer_conv_kernel_size))
+        self.conformer_dropout = float(np.clip(conformer_dropout, 0.0, 1.0))
+        self.wavenet_kernel_size = max(1, int(wavenet_kernel_size))
+        self.wavenet_dilation_base = max(1, int(wavenet_dilation_base))
+        self.wavenet_skip_channels = (
+            int(wavenet_skip_channels) if wavenet_skip_channels is not None else None
+        )
+        self.esn_spectral_radius = float(esn_spectral_radius)
+        self.esn_input_scaling = float(esn_input_scaling)
+        self.esn_leak_rate = float(esn_leak_rate)
+        self.esn_bias_scale = float(esn_bias_scale)
+        self.esn_activation = str(esn_activation)
+        self.transformer_num_heads = max(1, int(transformer_num_heads))
+        self.transformer_ff_multiplier = float(max(transformer_ff_multiplier, 1.0))
+        self.transformer_dropout = float(np.clip(transformer_dropout, 0.0, 1.0))
 
         self.liquid_tau_min = max(float(liquid_tau_min), 1e-3)
         self.liquid_tau_max = max(float(liquid_tau_max), self.liquid_tau_min + 1e-3)
@@ -283,29 +247,8 @@ class DPEventLogSynthesizer:
             embeddings_regularizer=tf.keras.regularizers.l2(1e-5),
             mask_zero=True,
         )(inputs)
-        x = embedding_layer
-
-        # Use last-state pooling: final encoder returns a single timestep embedding
-        if self.method == "TCN":
-            x = self._build_tcn_encoder(x)
-        elif self.method == "LNN":
-            x = self._build_liquid_encoder(x)
-        else:
-            for idx, units in enumerate(self.units_per_layer):
-                is_last = idx == (len(self.units_per_layer) - 1)
-                return_seq = not is_last
-                if self.method == "LSTM":
-                    x = LSTM(units, return_sequences=return_seq)(x)
-                elif self.method == "Bi-LSTM":
-                    x = Bidirectional(LSTM(units, return_sequences=return_seq))(x)
-                elif self.method == "GRU":
-                    x = GRU(units, return_sequences=return_seq)(x)
-                elif self.method == "Bi-GRU":
-                    x = Bidirectional(GRU(units, return_sequences=return_seq))(x)
-                elif self.method == "RNN":
-                    x = SimpleRNN(units, return_sequences=return_seq)(x)
-                elif self.method == "Bi-RNN":
-                    x = Bidirectional(SimpleRNN(units, return_sequences=return_seq))(x)
+        encoder = self._create_encoder()
+        x = encoder.build(embedding_layer)
         x = BatchNormalization()(x)
         x = Dropout(self.dropout)(x)
 
@@ -336,37 +279,57 @@ class DPEventLogSynthesizer:
                 noise_multiplier=self.noise_multiplier,
                 num_microbatches=1,
                 learning_rate=self.learning_rate,
-            )
+        )
         return tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
 
-    def _build_liquid_encoder(self, inputs: tf.Tensor) -> tf.Tensor:
-        """Stacked liquid neural network encoder."""
-        x = inputs
-        for idx, units in enumerate(self.units_per_layer):
-            return_seq = idx < (len(self.units_per_layer) - 1)
-            cell = LiquidTimeConstantCell(
-                units=units,
+    def _create_encoder(self) -> Encoder:
+        """Instantiate the configured encoder class with the appropriate hyperparameters."""
+        encoder_class = get_encoder_class(self.method)
+        if self.method == "TCN":
+            kwargs: dict[str, Any] = {"filters_per_layer": self.units_per_layer}
+        elif self.method == "Conformer":
+            kwargs = {
+                "units_per_layer": self.units_per_layer,
+                "num_heads": self.conformer_num_heads,
+                "ff_multiplier": self.conformer_ff_multiplier,
+                "conv_kernel_size": self.conformer_conv_kernel_size,
+                "dropout": self.conformer_dropout,
+            }
+        elif self.method == "WaveNet":
+            kwargs = {
+                "units_per_layer": self.units_per_layer,
+                "kernel_size": self.wavenet_kernel_size,
+                "dilation_base": self.wavenet_dilation_base,
+                "skip_channels": self.wavenet_skip_channels,
+            }
+        elif self.method == "ESN":
+            kwargs = {
+                "units_per_layer": self.units_per_layer,
+                "spectral_radius": self.esn_spectral_radius,
+                "input_scaling": self.esn_input_scaling,
+                "leak_rate": self.esn_leak_rate,
+                "bias_scale": self.esn_bias_scale,
+                "activation": self.esn_activation,
+                "seed": self.seed,
+            }
+        elif self.method == "Transformer":
+            kwargs = {
+                "units_per_layer": self.units_per_layer,
+                "num_heads": self.transformer_num_heads,
+                "ff_multiplier": self.transformer_ff_multiplier,
+                "dropout": self.transformer_dropout,
+            }
+        else:
+            kwargs = {"units_per_layer": self.units_per_layer}
+
+        if self.method == "LNN":
+            kwargs.update(
                 tau_min=self.liquid_tau_min,
                 tau_max=self.liquid_tau_max,
                 connectivity=self.liquid_connectivity,
-                name=f"liquid_cell_{idx}",
             )
-            x = RNN(cell, return_sequences=return_seq, name=f"liquid_layer_{idx}")(x)
-        return x
 
-    def _build_tcn_encoder(self, inputs: tf.Tensor) -> tf.Tensor:
-        """Temporal convolutional encoder that returns the final timestep embedding."""
-        x = inputs
-        for idx, filters in enumerate(self.units_per_layer):
-            dilation = 2**idx
-            x = Conv1D(
-                filters=filters,
-                kernel_size=3,
-                padding="causal",
-                dilation_rate=dilation,
-                activation="relu",
-            )(x)
-        return Lambda(lambda t: t[:, -1, :], name="tcn_last_state")(x)
+        return encoder_class(**kwargs)
 
     def train(self, epochs: int | None = None) -> None:
         """Train the model with early stopping, metrics logging, and optional checkpoints.
@@ -520,6 +483,21 @@ class DPEventLogSynthesizer:
             "validation_split": self.validation_split,
             "checkpoint_path": os.path.join("checkpoints", "best.keras"),
             "seed": self.seed,
+            "conformer_num_heads": self.conformer_num_heads,
+            "conformer_ff_multiplier": self.conformer_ff_multiplier,
+            "conformer_conv_kernel_size": self.conformer_conv_kernel_size,
+            "conformer_dropout": self.conformer_dropout,
+            "wavenet_kernel_size": self.wavenet_kernel_size,
+            "wavenet_dilation_base": self.wavenet_dilation_base,
+            "wavenet_skip_channels": self.wavenet_skip_channels,
+            "esn_spectral_radius": self.esn_spectral_radius,
+            "esn_input_scaling": self.esn_input_scaling,
+            "esn_leak_rate": self.esn_leak_rate,
+            "esn_bias_scale": self.esn_bias_scale,
+            "esn_activation": self.esn_activation,
+            "transformer_num_heads": self.transformer_num_heads,
+            "transformer_ff_multiplier": self.transformer_ff_multiplier,
+            "transformer_dropout": self.transformer_dropout,
         }
 
         with open(os.path.join(path, "model_config.yaml"), "w", encoding="utf-8") as handle:
@@ -552,7 +530,12 @@ class DPEventLogSynthesizer:
         Args:
             path: Directory containing the saved model and artifacts.
         """
-        self.model = tf.keras.models.load_model(os.path.join(path, "model.keras"), compile=False)
+        self.model = tf.keras.models.load_model(
+            os.path.join(path, "model.keras"),
+            compile=False,
+            safe_mode=False,  # trusted, locally produced models may include Lambda layers
+            custom_objects=get_custom_objects(),
+        )
 
         self.tokenizer = _load_pickle_file(os.path.join(path, "tokenizer.pkl"))
         self.cluster_dict = _load_pickle_file(os.path.join(path, "cluster_dict.pkl"))
@@ -587,6 +570,27 @@ class DPEventLogSynthesizer:
             self.validation_split = cfg.get("validation_split", self.validation_split)
             self.checkpoint_path = cfg.get("checkpoint_path", self.checkpoint_path)
             self.seed = cfg.get("seed", self.seed)
+            self.conformer_num_heads = cfg.get("conformer_num_heads", self.conformer_num_heads)
+            self.conformer_ff_multiplier = cfg.get("conformer_ff_multiplier", self.conformer_ff_multiplier)
+            self.conformer_conv_kernel_size = cfg.get(
+                "conformer_conv_kernel_size", self.conformer_conv_kernel_size
+            )
+            self.conformer_dropout = cfg.get("conformer_dropout", self.conformer_dropout)
+            self.wavenet_kernel_size = cfg.get("wavenet_kernel_size", self.wavenet_kernel_size)
+            self.wavenet_dilation_base = cfg.get(
+                "wavenet_dilation_base", self.wavenet_dilation_base
+            )
+            self.wavenet_skip_channels = cfg.get(
+                "wavenet_skip_channels", self.wavenet_skip_channels
+            )
+            self.esn_spectral_radius = cfg.get("esn_spectral_radius", self.esn_spectral_radius)
+            self.esn_input_scaling = cfg.get("esn_input_scaling", self.esn_input_scaling)
+            self.esn_leak_rate = cfg.get("esn_leak_rate", self.esn_leak_rate)
+            self.esn_bias_scale = cfg.get("esn_bias_scale", self.esn_bias_scale)
+            self.esn_activation = cfg.get("esn_activation", self.esn_activation)
+            self.transformer_num_heads = cfg.get("transformer_num_heads", self.transformer_num_heads)
+            self.transformer_ff_multiplier = cfg.get("transformer_ff_multiplier", self.transformer_ff_multiplier)
+            self.transformer_dropout = cfg.get("transformer_dropout", self.transformer_dropout)
 
         self.modified_column_list = [
             c.replace(":", "_").replace(" ", "_") for c in (self.column_list or [])
