@@ -11,6 +11,11 @@ other similar regulations, must be confirmed before sharing data, even if strong
 A detailed explanation of the algorithm and its workings can be found in our preprint:
 [PALSYN: A Method for Synthetic Multi-Perspective Event Log Generation with Differential Private Guarantees](https://www.researchsquare.com/article/rs-6565248/v1)
 
+> **Research tag v0.0.1-research-alpha**  
+> This tag corresponds to the exact implementation used to generate the results reported in the paper
+> _"PALSYN: A Method for Synthetic Multi-Perspective Event Log Generation with Differential Private Guarantees"_.
+> Later updates may introduce new models or streamline the approach, so use this tag if you need the precise version of the code used in the publication.
+
 
 ## Features
 
