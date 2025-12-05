@@ -89,6 +89,7 @@ For end-to-end, runnable walkthroughs (train -> save -> load -> sample) see the 
 - `tutorial/palsyn_lstm_tutorial.py` - LSTM backbone, epsilon=15
 - `tutorial/palsyn_rnn_tutorial.py` - SimpleRNN baseline using the same hyperparameters
 - `tutorial/palsyn_gru_tutorial.py` - GRU backbone, also mirroring the LSTM config
+- `tutorial/palsyn_tcn_tutorial.py` - Temporal convolutional (TCN) backbone
 
 ### Sampling Event Logs
 After training or loading a saved model, sample synthetic traces and export them to XES/Excel with the snippet below.
