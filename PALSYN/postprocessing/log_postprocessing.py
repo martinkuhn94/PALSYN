@@ -268,13 +268,15 @@ def create_dataframe_from_sentences(
     parsed_data = []
     removed_traces = 0
 
-    for sentence in transformed_sentences:
+    for idx, sentence in enumerate(transformed_sentences):
         try:
             case_dict = {
                 word.split("==")[0]: word.split("==")[1]
                 for word in sentence
                 if word.split("==")[0].startswith("case:")
             }
+            if "case:concept:name" not in case_dict:
+                case_dict["case:concept:name"] = f"case_{idx}"
             event_indices = [i for i, s in enumerate(sentence) if s.startswith("concept:name")]
             event_indices.pop(0)
             events = np.split(sentence, event_indices)
