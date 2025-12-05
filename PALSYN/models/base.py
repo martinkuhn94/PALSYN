@@ -47,6 +47,11 @@ def stack_recurrent_layers(
     return x
 
 
+def sanitize_column_names(columns: Sequence[str]) -> list[str]:
+    """Normalize raw column names so they can be used as Keras identifiers."""
+    return [column.replace(":", "_").replace(" ", "_") for column in columns]
+
+
 @tf.keras.utils.register_keras_serializable(package="palsyn")
 class LastTimeStep(Layer):
     """Serializable helper that extracts the final timestep embedding."""
@@ -65,4 +70,11 @@ class LastTimeStep(Layer):
         return super().get_config()
 
 
-__all__ = ["Encoder", "LayerFactory", "LastTimeStep", "normalize_units", "stack_recurrent_layers"]
+__all__ = [
+    "Encoder",
+    "LayerFactory",
+    "LastTimeStep",
+    "normalize_units",
+    "sanitize_column_names",
+    "stack_recurrent_layers",
+]

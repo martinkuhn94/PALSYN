@@ -1,3 +1,3 @@
-from .synthesizer import DPEventLogSynthesizer
+from .synthesizer import DPEventLogSynthesizer, LSTMSynthesizer
 
-__all__ = ["DPEventLogSynthesizer"]
+__all__ = ["DPEventLogSynthesizer", "LSTMSynthesizer"]
