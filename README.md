@@ -24,7 +24,7 @@ A detailed explanation of the algorithm and its workings can be found in our pre
 - **Differential Privacy:** Ensures privacy by incorporating differential privacy techniques.
 
 ## Installation
-Choose the workflow that best matches your setup.
+Choose the workflow that best matches your setup. The tutorials and CLI scripts assume the project is installed in editable mode so `PALSYN` can be imported from anywhere—run one of the options below before executing `tutorial/*.py`.
 
 ### 1. Standard Install (`pip install .`)
 ```bash
