@@ -4,9 +4,10 @@ from typing import Callable, Sequence
 
 import tensorflow as tf
 from keras import activations, initializers
-from keras.layers import RNN
+from keras.layers import RNN, BatchNormalization, Dense, Dropout, Embedding, Input
+from keras import Model
 
-from .base import Encoder, normalize_units
+from .base import Encoder, normalize_units, sanitize_column_names
 
 
 @tf.keras.utils.register_keras_serializable(package="palsyn")
@@ -173,4 +174,59 @@ class EchoStateNetworkEncoder(Encoder):
         return x
 
 
-__all__ = ["EchoStateCell", "EchoStateNetworkEncoder"]
+def build_esn_model(
+    *,
+    total_words: int,
+    max_sequence_len: int,
+    embedding_output_dims: int,
+    units_per_layer: Sequence[int],
+    dropout: float,
+    column_list: Sequence[str],
+    spectral_radius: float = 0.9,
+    input_scaling: float = 0.1,
+    leak_rate: float = 1.0,
+    bias_scale: float = 0.0,
+    activation: str = "tanh",
+    seed: int | None = None,
+) -> tuple[Model, list[str]]:
+    """Create an Echo State Network-based autoregressive model for the synthesizer."""
+    if total_words <= 0:
+        raise ValueError("total_words must be positive to build the model.")
+    if max_sequence_len <= 0:
+        raise ValueError("max_sequence_len must be positive to build the model.")
+    if not column_list:
+        raise ValueError("column_list must have at least one column.")
+
+    inputs = Input(shape=(max_sequence_len,), dtype="int32")
+    embedding_layer = Embedding(
+        total_words,
+        embedding_output_dims,
+        input_length=max_sequence_len,
+        embeddings_regularizer=tf.keras.regularizers.l2(1e-5),
+        mask_zero=True,
+    )(inputs)
+
+    encoder = EchoStateNetworkEncoder(
+        units_per_layer=units_per_layer,
+        spectral_radius=spectral_radius,
+        input_scaling=input_scaling,
+        leak_rate=leak_rate,
+        bias_scale=bias_scale,
+        activation=activation,
+        seed=seed,
+    )
+    x = encoder.build(embedding_layer)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout)(x)
+
+    modified_column_list = sanitize_column_names(column_list)
+    outputs = [
+        Dense(total_words, activation="softmax", name=column_name)(x)
+        for column_name in modified_column_list
+    ]
+
+    model = Model(inputs=inputs, outputs=outputs)
+    return model, modified_column_list
+
+
+__all__ = ["EchoStateCell", "EchoStateNetworkEncoder", "build_esn_model"]

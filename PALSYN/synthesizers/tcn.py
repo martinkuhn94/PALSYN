@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+from typing import Any, Sequence
+
+import tensorflow as tf
+
+from PALSYN.models.tcn import build_tcn_model
+
+from .base import BaseSynthesizer
+
+
+class TCNSynthesizer(BaseSynthesizer):
+    MODEL_TYPE = "TCN"
+
+    def __init__(
+        self,
+        *,
+        max_clusters: int = 10,
+        trace_quantile: float = 0.95,
+        epsilon: float | None = None,
+        seed: int | None = None,
+        epochs: int = 3,
+        batch_size: int = 16,
+        learning_rate: float = 0.001,
+        validation_split: float = 0.1,
+        checkpoint_path: str | None = None,
+        l2_norm_clip: float = 1.5,
+        embedding_output_dims: int = 16,
+        filters_per_layer: Sequence[int] | None = None,
+        dropout: float = 0.0,
+        kernel_size: int = 3,
+        activation: str = "relu",
+        padding: str = "causal",
+        dilation_base: int = 2,
+        pre_processing: dict[str, Any] | None = None,
+        model: dict[str, Any] | None = None,
+        dp_optimizer: dict[str, Any] | None = None,
+    ) -> None:
+        """Initialize a differential privacy-aware temporal convolutional synthesizer."""
+        preprocessing_cfg: dict[str, Any] = {
+            "max_clusters": max_clusters,
+            "trace_quantile": trace_quantile,
+            "seed": seed,
+        }
+        if pre_processing:
+            preprocessing_cfg.update(pre_processing)
+
+        model_cfg: dict[str, Any] = {
+            "epochs": epochs,
+            "batch_size": batch_size,
+            "validation_split": validation_split,
+            "checkpoint_path": checkpoint_path,
+            "embedding_output_dims": embedding_output_dims,
+            "filters_per_layer": filters_per_layer,
+            "dropout": dropout,
+            "kernel_size": kernel_size,
+            "activation": activation,
+            "padding": padding,
+            "dilation_base": dilation_base,
+        }
+        if model:
+            model_cfg.update(model)
+
+        dp_optimizer_cfg: dict[str, Any] = {
+            "epsilon": epsilon,
+            "learning_rate": learning_rate,
+            "l2_norm_clip": l2_norm_clip,
+        }
+        if dp_optimizer:
+            dp_optimizer_cfg.update(dp_optimizer)
+
+        super().__init__(
+            max_clusters=int(preprocessing_cfg.get("max_clusters", max_clusters)),
+            trace_quantile=float(preprocessing_cfg.get("trace_quantile", trace_quantile)),
+            epsilon=dp_optimizer_cfg.get("epsilon"),
+            seed=preprocessing_cfg.get("seed"),
+        )
+        self._configure_training(
+            epochs=int(model_cfg.get("epochs", epochs)),
+            batch_size=int(model_cfg.get("batch_size", batch_size)),
+            validation_split=float(model_cfg.get("validation_split", validation_split)),
+            checkpoint_path=model_cfg.get("checkpoint_path"),
+        )
+        self._configure_optimizer(
+            learning_rate=float(dp_optimizer_cfg.get("learning_rate", learning_rate)),
+            l2_norm_clip=float(dp_optimizer_cfg.get("l2_norm_clip", l2_norm_clip)),
+        )
+
+        filters_setting = model_cfg.get("filters_per_layer")
+        filters = list(filters_setting) if filters_setting else [64, 32]
+        if not filters or not all(isinstance(f, int) and f > 0 for f in filters):
+            raise ValueError("filters_per_layer must be a non-empty sequence of positive integers.")
+        self.filters_per_layer = filters
+        self.embedding_output_dims = int(
+            model_cfg.get("embedding_output_dims", embedding_output_dims)
+        )
+        self.dropout = float(model_cfg.get("dropout", dropout))
+        self.kernel_size = int(model_cfg.get("kernel_size", kernel_size))
+        self.activation = str(model_cfg.get("activation", activation))
+        self.padding = str(model_cfg.get("padding", padding))
+        self.dilation_base = int(model_cfg.get("dilation_base", dilation_base))
+
+    def _get_model_specific_init_args(self) -> dict[str, Any]:
+        return {
+            "embedding_output_dims": self.embedding_output_dims,
+            "filters_per_layer": self.filters_per_layer,
+            "dropout": self.dropout,
+            "kernel_size": self.kernel_size,
+            "activation": self.activation,
+            "padding": self.padding,
+            "dilation_base": self.dilation_base,
+        }
+
+    def _build_model_impl(self) -> tuple[tf.keras.Model, list[str]]:
+        model, modified_columns = build_tcn_model(
+            total_words=self.total_words,
+            max_sequence_len=self.max_sequence_len,
+            embedding_output_dims=self.embedding_output_dims,
+            filters_per_layer=self.filters_per_layer,
+            dropout=self.dropout,
+            column_list=self.column_list,
+            kernel_size=self.kernel_size,
+            activation=self.activation,
+            padding=self.padding,
+            dilation_base=self.dilation_base,
+        )
+        return model, modified_columns
+
+
+__all__ = ["TCNSynthesizer"]

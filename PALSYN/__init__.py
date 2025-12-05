@@ -1,3 +1,3 @@
-from .synthesizer import DPEventLogSynthesizer, LSTMSynthesizer
+from .synthesizer import BaseSynthesizer, GRUSynthesizer, LSTMSynthesizer, RNNSynthesizer, TCNSynthesizer
 
-__all__ = ["DPEventLogSynthesizer", "LSTMSynthesizer"]
+__all__ = ["BaseSynthesizer", "LSTMSynthesizer", "RNNSynthesizer", "GRUSynthesizer", "TCNSynthesizer"]
