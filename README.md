@@ -26,17 +26,7 @@ A detailed explanation of the algorithm and its workings can be found in our pre
 ## Installation
 Choose the workflow that best matches your setup.
 
-### 1. Minimal Runtime (requirements.txt)
-```bash
-git clone https://github.com/martinkuhn94/PALSYN.git
-cd PALSYN
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### 2. Editable Install (`pip install .`)
+### 1. Standard Install (`pip install .`)
 ```bash
 git clone https://github.com/martinkuhn94/PALSYN.git
 cd PALSYN
@@ -46,7 +36,7 @@ pip install --upgrade pip
 pip install .
 ```
 
-### 3. Development Environment (`pip install -e .[dev]`)
+### 2. Editable/Development Install (`pip install -e .[dev]`)
 ```bash
 git clone https://github.com/martinkuhn94/PALSYN.git
 cd PALSYN
@@ -55,58 +45,72 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install --upgrade pip
 pip install -e .[dev]
 ```
-This third option installs tooling such as Ruff, mypy, pytest, coverage, and type stubs that are referenced in `pyproject.toml`.
+This option installs Ruff, mypy, pytest, coverage, and type stubs defined in `pyproject.toml`, making it ideal for contributors who want local linting and typing parity with CI.
 
 ## Usage
 
 ### Training the Model
-The example below mirrors `train_example.py`. It trains a Bi-LSTM with 128-dimensional embeddings, two recurrent layers (32/16 units), dropout, and a 90th percentile trace filter.
+The example below matches the configuration used in `tutorial/palsyn_lstm_tutorial.py`. It shows the grouped dictionaries (`pre_processing`, `model`, `dp_optimizer`) that control preprocessing, architecture, and differential-privacy settings.
 
 ```python
 import pm4py
-from PALSYN.synthesizer import DPEventLogSynthesizer
+from PALSYN.synthesizer import LSTMSynthesizer
 
-xes_file_path = "example_logs/Road_Traffic_Fine_Management_Process_short.xes"
-event_log = pm4py.read_xes(xes_file_path)
+event_log = pm4py.read_xes("example_logs/your_log.xes")
 
-palsyn_model = DPEventLogSynthesizer(
-    embedding_output_dims=128,
-    epochs=5,
-    batch_size=128,
-    max_clusters=15,
-    dropout=0.3,
-    trace_quantile=0.9,
-    l2_norm_clip=1.0,
-    method="Bi-LSTM",
-    units_per_layer=[32, 16],
+palsyn_model = LSTMSynthesizer(
+    pre_processing={
+        "max_clusters": 15,
+        "trace_quantile": 0.9,
+        "seed": 42,
+    },
+    model={
+        "embedding_output_dims": 128,
+        "epochs": 5,
+        "batch_size": 128,
+        "validation_split": 0.15,
+        "units_per_layer": [32, 16],
+        "dropout": 0.0,
+        "bidirectional": True,
+    },
+    dp_optimizer={
+        "epsilon": 15.0,
+        "learning_rate": 5e-4,
+        "l2_norm_clip": 1.0,
+    },
 )
 
 palsyn_model.fit(event_log)
-palsyn_model.save_model("models/Bi-LSTM_Road_Fines_u=32_e=inf")
+palsyn_model.save_model("models/your_model_run")
 ```
 
+For end-to-end, runnable walkthroughs (train -> save -> load -> sample) see the scripts in `tutorial/`:
+
+- `tutorial/palsyn_lstm_tutorial.py` - LSTM backbone, epsilon=15
+- `tutorial/palsyn_rnn_tutorial.py` - SimpleRNN baseline using the same hyperparameters
+- `tutorial/palsyn_gru_tutorial.py` - GRU backbone, also mirroring the LSTM config
+
 ### Sampling Event Logs
-After training or loading a saved model, sample synthetic traces and export them to XES/Excel as shown in `sampling_example.py`.
+After training or loading a saved model, sample synthetic traces and export them to XES/Excel with the snippet below.
 
 ```python
 import pm4py
 
 from PALSYN.postprocessing.log_postprocessing import clean_xes_file
-from PALSYN.synthesizer import DPEventLogSynthesizer
+from PALSYN.synthesizer import LSTMSynthesizer
 
-palsyn_model = DPEventLogSynthesizer()
-palsyn_model.load("models/Bi-LSTM_Road_Fines_u=32_e=inf")
+palsyn_model = LSTMSynthesizer.load("models/your_model_run")
 
 event_log = palsyn_model.sample(sample_size=5600, batch_size=100)
 event_log_xes = pm4py.convert_to_event_log(event_log)
 
-xes_filename = "road_fines_e=inf.xes"
+xes_filename = "your_model_run.xes"
 pm4py.write_xes(event_log_xes, xes_filename)
 clean_xes_file(xes_filename, xes_filename)
 
 df = pm4py.convert_to_dataframe(event_log_xes)
 df["time:timestamp"] = df["time:timestamp"].astype(str)
-df.to_excel("road_fines_e=inf.xlsx", index=False)
+df.to_excel("your_model_run.xlsx", index=False)
 ```
 
 ## Future Work
