@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import tensorflow as tf
-from keras.layers import RNN
+from keras import Model, Input
+from keras.layers import BatchNormalization, Dense, Dropout, Embedding, RNN
 
-from .base import Encoder, normalize_units
+from .base import Encoder, normalize_units, sanitize_column_names
 
 
 @tf.keras.utils.register_keras_serializable(package="palsyn")
@@ -140,4 +141,53 @@ class LiquidNeuralNetworkEncoder(Encoder):
         return x
 
 
-__all__ = ["LiquidTimeConstantCell", "LiquidNeuralNetworkEncoder"]
+def build_lnn_model(
+    *,
+    total_words: int,
+    max_sequence_len: int,
+    embedding_output_dims: int,
+    units_per_layer: Sequence[int],
+    dropout: float,
+    column_list: Sequence[str],
+    tau_min: float = 0.1,
+    tau_max: float = 2.0,
+    connectivity: float = 0.3,
+) -> tuple[Model, list[str]]:
+    """Create a liquid neural network-based autoregressive model."""
+    if total_words <= 0:
+        raise ValueError("total_words must be positive to build the model.")
+    if max_sequence_len <= 0:
+        raise ValueError("max_sequence_len must be positive to build the model.")
+    if not column_list:
+        raise ValueError("column_list must have at least one column.")
+
+    inputs = Input(shape=(max_sequence_len,), dtype="int32")
+    embedding_layer = Embedding(
+        total_words,
+        embedding_output_dims,
+        input_length=max_sequence_len,
+        embeddings_regularizer=tf.keras.regularizers.l2(1e-5),
+        mask_zero=True,
+    )(inputs)
+
+    encoder = LiquidNeuralNetworkEncoder(
+        units_per_layer=units_per_layer,
+        tau_min=tau_min,
+        tau_max=tau_max,
+        connectivity=connectivity,
+    )
+    x = encoder.build(embedding_layer)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout)(x)
+
+    modified_column_list = sanitize_column_names(column_list)
+    outputs = [
+        Dense(total_words, activation="softmax", name=column_name)(x)
+        for column_name in modified_column_list
+    ]
+
+    model = Model(inputs=inputs, outputs=outputs)
+    return model, modified_column_list
+
+
+__all__ = ["LiquidTimeConstantCell", "LiquidNeuralNetworkEncoder", "build_lnn_model"]
