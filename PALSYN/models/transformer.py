@@ -3,9 +3,17 @@ from __future__ import annotations
 from typing import Sequence
 
 import tensorflow as tf
-from keras.layers import Dropout, LayerNormalization, MultiHeadAttention
+from keras import Input, Model
+from keras.layers import (
+    BatchNormalization,
+    Dense,
+    Dropout,
+    Embedding,
+    LayerNormalization,
+    MultiHeadAttention,
+)
 
-from .base import Encoder, LastTimeStep, normalize_units
+from .base import Encoder, LastTimeStep, normalize_units, sanitize_column_names
 
 
 class TransformerBlock(tf.keras.layers.Layer):
@@ -124,4 +132,52 @@ class TransformerEncoder(Encoder):
         return tf.cast(approx_mask, tf.bool)
 
 
-__all__ = ["TransformerBlock", "TransformerEncoder"]
+def build_transformer_model(
+    *,
+    total_words: int,
+    max_sequence_len: int,
+    embedding_output_dims: int,
+    units_per_layer: Sequence[int],
+    dropout: float,
+    column_list: Sequence[str],
+    num_heads: int = 4,
+    ff_multiplier: float = 4.0,
+) -> tuple[Model, list[str]]:
+    """Create a Transformer-based autoregressive model for the synthesizer."""
+    if total_words <= 0:
+        raise ValueError("total_words must be positive to build the model.")
+    if max_sequence_len <= 0:
+        raise ValueError("max_sequence_len must be positive to build the model.")
+    if not column_list:
+        raise ValueError("column_list must have at least one column.")
+
+    inputs = Input(shape=(max_sequence_len,), dtype="int32")
+    embedding_layer = Embedding(
+        total_words,
+        embedding_output_dims,
+        input_length=max_sequence_len,
+        embeddings_regularizer=tf.keras.regularizers.l2(1e-5),
+        mask_zero=True,
+    )(inputs)
+
+    encoder = TransformerEncoder(
+        units_per_layer=units_per_layer,
+        num_heads=num_heads,
+        ff_multiplier=ff_multiplier,
+        dropout=dropout,
+    )
+    x = encoder.build(embedding_layer)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout)(x)
+
+    modified_column_list = sanitize_column_names(column_list)
+    outputs = [
+        Dense(total_words, activation="softmax", name=column_name)(x)
+        for column_name in modified_column_list
+    ]
+
+    model = Model(inputs=inputs, outputs=outputs)
+    return model, modified_column_list
+
+
+__all__ = ["TransformerBlock", "TransformerEncoder", "build_transformer_model"]

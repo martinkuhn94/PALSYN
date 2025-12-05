@@ -5,6 +5,7 @@ from .lnn import LNNSynthesizer
 from .lstm import LSTMSynthesizer
 from .rnn import RNNSynthesizer
 from .tcn import TCNSynthesizer
+from .transformer import TransformerSynthesizer
 
 __all__ = [
     "BaseSynthesizer",
@@ -14,4 +15,5 @@ __all__ = [
     "TCNSynthesizer",
     "ESNSynthesizer",
     "LNNSynthesizer",
+    "TransformerSynthesizer",
 ]

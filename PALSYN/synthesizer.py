@@ -7,6 +7,7 @@ from PALSYN.synthesizers.lnn import LNNSynthesizer
 from PALSYN.synthesizers.lstm import LSTMSynthesizer
 from PALSYN.synthesizers.rnn import RNNSynthesizer
 from PALSYN.synthesizers.tcn import TCNSynthesizer
+from PALSYN.synthesizers.transformer import TransformerSynthesizer
 
 __all__ = [
     "BaseSynthesizer",
@@ -16,4 +17,5 @@ __all__ = [
     "TCNSynthesizer",
     "ESNSynthesizer",
     "LNNSynthesizer",
+    "TransformerSynthesizer",
 ]
