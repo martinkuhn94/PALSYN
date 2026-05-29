@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .vscode/
 .venv/
+.DS_Store
 *.egg-info/
 *.egg
 build/
