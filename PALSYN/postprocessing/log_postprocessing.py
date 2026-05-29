@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import sys
+import warnings
 from collections.abc import Sequence
 from xml.etree import ElementTree as StdlibET
 
@@ -175,9 +176,7 @@ def transform_sentences(
         )
         sys.stdout.flush()
 
-        temp_sentence = [
-            "case:concept:name==" + str(datetime.datetime.now().timestamp()).replace(".", "")
-        ]
+        temp_sentence = [f"case:concept:name==synthetic_case_{case_id}"]
         epoch = create_start_epoch(start_epoch)
         for word in sentence:
             temp_sentence, epoch = process_word(
@@ -265,7 +264,7 @@ def create_dataframe_from_sentences(
     Returns:
     pd.DataFrame: DataFrame created from the synthetic sentences.
     """
-    parsed_data = []
+    parsed_data: list[list[dict[str, str]]] = []
     removed_traces = 0
 
     for idx, sentence in enumerate(transformed_sentences):
@@ -278,6 +277,8 @@ def create_dataframe_from_sentences(
             if "case:concept:name" not in case_dict:
                 case_dict["case:concept:name"] = f"case_{idx}"
             event_indices = [i for i, s in enumerate(sentence) if s.startswith("concept:name")]
+            if not event_indices:
+                raise ValueError("Trace does not contain any concept:name tokens.")
             event_indices.pop(0)
             events = np.split(sentence, event_indices)
             event_dict_list = []
@@ -286,8 +287,18 @@ def create_dataframe_from_sentences(
                 event_dict.update(case_dict)
                 event_dict_list.append(event_dict)
             parsed_data.append(event_dict_list)
-        except Exception:
+        except (IndexError, KeyError, ValueError):
             removed_traces += 1
+
+    if not parsed_data and transformed_sentences:
+        raise ValueError("Unable to parse any synthetic traces into a DataFrame.")
+
+    if removed_traces > 0:
+        warnings.warn(
+            f"Skipped {removed_traces} malformed synthetic trace(s) during DataFrame creation.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     df = pd.DataFrame()
     for case in parsed_data:

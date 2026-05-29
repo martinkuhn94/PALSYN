@@ -275,7 +275,7 @@ def calculate_starting_epoch(df: pd.DataFrame, epsilon: float | None = None) -> 
         starting_epoch_mean = np.mean(starting_epoch_list)
         starting_epoch_std = np.std(starting_epoch_list)
         starting_epoch_min = 0
-        max_timestamp = int(datetime.now().timestamp())
+        max_timestamp = int(starting_epoch_list.max())
 
         if epsilon is None:
             return [starting_epoch_mean, starting_epoch_std, starting_epoch_min, max_timestamp]

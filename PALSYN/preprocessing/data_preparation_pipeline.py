@@ -10,10 +10,7 @@ later by whatever synthesizer consumes the prepared tensors. The
 classes to prioritize readability.
 """
 
-from collections.abc import Mapping
 from typing import Any
-
-import pandas as pd
 
 from PALSYN.preprocessing.log_preprocessing import preprocess_event_log
 from PALSYN.preprocessing.log_tokenization import tokenize_log
@@ -83,37 +80,3 @@ class DataPreparationPipeline:
             "num_examples": num_examples,
             "noise_multiplier": noise_multiplier,
         }
-
-
-def _build_toy_log() -> pd.DataFrame:
-    """Create a tiny event log for demonstration/testing purposes."""
-    data = {
-        "case:concept:name": ["C1", "C1", "C2", "C2"],
-        "concept:name": ["Start", "Approve", "Start", "Reject"],
-        "time:timestamp": [
-            "2024-01-01T09:00:00",
-            "2024-01-01T10:00:00",
-            "2024-01-02T08:30:00",
-            "2024-01-02T12:45:00",
-        ],
-        "org:resource": ["Alice", "Bob", "Alice", "Cara"],
-        "amount": [100.0, 150.0, 80.0, 120.0],
-    }
-    df = pd.DataFrame(data)
-    df["time:timestamp"] = pd.to_datetime(df["time:timestamp"])
-    return df
-
-
-def _pretty_print(metadata: Mapping[str, Any]) -> None:
-    """Print a small subset of the returned metadata for illustration."""
-    print("Tokens shape (xs):", metadata["xs"].shape)
-    print("Targets shape (ys):", metadata["ys"].shape)
-    print("Vocabulary size:", metadata["total_words"])
-    print("Columns modeled:", metadata["column_list"])
-    print("Cluster keys:", list(metadata["cluster_dict"].keys()))
-
-
-if __name__ == "__main__":
-    pipeline = DataPreparationPipeline()
-    artifacts = pipeline.run(_build_toy_log())
-    _pretty_print(artifacts)

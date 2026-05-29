@@ -7,7 +7,6 @@ from typing import Any
 
 import numpy as np
 import numpy.typing as npt
-from keras import backend as K
 from keras.utils import pad_sequences
 
 from PALSYN.preprocessing.log_preprocessing import END_TOKEN, START_TOKEN
@@ -133,7 +132,6 @@ def sample_batch(  # noqa: C901 - generation loop is inherently branching-heavy
 
     Notes:
         - Prints a simple progress bar to stdout during generation.
-        - Clears the Keras backend session before returning.
     """
     start_time = time.perf_counter()
 
@@ -215,8 +213,6 @@ def sample_batch(  # noqa: C901 - generation loop is inherently branching-heavy
                 if len(seq) >= (max_sequence_len * 2):
                     active_mask[i] = False
                     update_progress()
-
-    K.clear_session()
 
     max_len_cutoff = int(round(max_sequence_len * 1.5))
     cleaned: list[list[str]] = [
