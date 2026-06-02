@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-"""Optimizer helpers for PALSYN synthesizers."""
-
-from typing import Any
-
 import tensorflow as tf
+
+"""Optimizer helpers for PALSYN synthesizers."""
 
 try:
     from tensorflow_privacy.privacy.optimizers.dp_optimizer_keras import (

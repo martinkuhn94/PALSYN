@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Sequence
+from collections.abc import Sequence
+from typing import Callable
 
 import tensorflow as tf
 from keras.layers import Layer

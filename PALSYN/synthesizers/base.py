@@ -222,8 +222,7 @@ class BaseSynthesizer(ABC):
         return args
 
     @abstractmethod
-    def _build_model_impl(self) -> tuple[tf.keras.Model, list[str]]:
-        ...
+    def _build_model_impl(self) -> tuple[tf.keras.Model, list[str]]: ...
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -409,9 +408,7 @@ class BaseSynthesizer(ABC):
 
         model_type = data.get("model_type")
         if model_type != cls.MODEL_TYPE:
-            raise ValueError(
-                f"Cannot load model type '{model_type}' with class '{cls.__name__}'."
-            )
+            raise ValueError(f"Cannot load model type '{model_type}' with class '{cls.__name__}'.")
 
         init_args = data.get("init_args", {})
         model = cls(**init_args)

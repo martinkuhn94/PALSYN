@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import warnings
-from datetime import datetime
 from typing import Any
 
 import numpy as np

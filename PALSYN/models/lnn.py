@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Sequence
+from typing import Any
 
 import numpy as np
 import tensorflow as tf
-from keras import Model, Input
-from keras.layers import BatchNormalization, Dense, Dropout, Embedding, RNN
+from keras import Input, Model
+from keras.layers import RNN, BatchNormalization, Dense, Dropout, Embedding
 
 from .base import Encoder, normalize_units, sanitize_column_names
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import tensorflow as tf
 from keras import Input, Model
@@ -93,14 +93,18 @@ class TransformerEncoder(Encoder):
     ) -> None:
         self.units_per_layer = normalize_units(units_per_layer)
         if len(set(self.units_per_layer)) != 1:
-            raise ValueError("TransformerEncoder requires identical units_per_layer for residual connections")
+            raise ValueError(
+                "TransformerEncoder requires identical units_per_layer for residual connections"
+            )
         self.d_model = self.units_per_layer[0]
         self.num_layers = len(self.units_per_layer)
         self.num_heads = max(1, int(num_heads))
         self.ff_multiplier = float(max(ff_multiplier, 1.0))
         self.dropout_rate = float(max(min(dropout, 1.0), 0.0))
 
-        self.input_projection = tf.keras.layers.Dense(self.d_model, name="transformer_input_projection")
+        self.input_projection = tf.keras.layers.Dense(
+            self.d_model, name="transformer_input_projection"
+        )
         self.blocks = [
             TransformerBlock(
                 d_model=self.d_model,

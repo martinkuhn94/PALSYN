@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from collections.abc import Sequence
+from typing import Callable
 
 import tensorflow as tf
-from keras import activations, initializers
+from keras import Model, activations, initializers
 from keras.layers import RNN, BatchNormalization, Dense, Dropout, Embedding, Input
-from keras import Model
 
 from .base import Encoder, normalize_units, sanitize_column_names
 
@@ -100,9 +100,8 @@ class EchoStateCell(tf.keras.layers.AbstractRNNCell):
 
     def call(self, inputs: tf.Tensor, states: list[tf.Tensor]) -> tuple[tf.Tensor, list[tf.Tensor]]:
         prev_state = states[0]
-        assert self.input_kernel is not None
-        assert self.recurrent_kernel is not None
-        assert self.bias is not None
+        if self.input_kernel is None or self.recurrent_kernel is None or self.bias is None:
+            raise RuntimeError("EchoStateCell must be built before calling")
         reservoir_input = tf.matmul(inputs, self.input_kernel)
         reservoir_input += tf.matmul(prev_state, self.recurrent_kernel)
         reservoir_input = tf.nn.bias_add(reservoir_input, self.bias)

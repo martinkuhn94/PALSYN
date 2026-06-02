@@ -7,6 +7,7 @@ import pandas as pd
 from keras.callbacks import Callback as _RuntimeCallback
 
 if TYPE_CHECKING:
+
     class Callback(_RuntimeCallback):
         params: dict[str, Any]
         model: Any

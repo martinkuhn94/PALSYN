@@ -26,7 +26,7 @@ event_log = pm4py.read_xes(str(LOG_PATH))
 #    - pre_processing: controls clustering, trace trimming, and random seed.
 #    - model: training hyperparameters + LSTM architecture choices.
 #    - dp_optimizer: privacy budget plus DP-SGD optimizer settings. Epsilon controls the
-#      privacy budget: ~1-3 offers strong privacy, 5-10 is moderate, and values >=15 essentially 
+#      privacy budget: ~1-3 offers strong privacy, 5-10 is moderate, and values >=15 essentially
 #      prioritize utility over privacy guarantees.
 synthesizer = LSTMSynthesizer(
     pre_processing={

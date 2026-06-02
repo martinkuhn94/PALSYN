@@ -247,6 +247,46 @@ def process_word(
     return temp_sentence, epoch
 
 
+def _parse_case_dict(sentence: Sequence[str], idx: int) -> dict[str, str]:
+    """Extract case-level dictionary from a sentence."""
+    case_dict = {
+        word.split("==")[0]: word.split("==")[1]
+        for word in sentence
+        if word.split("==")[0].startswith("case:")
+    }
+    if "case:concept:name" not in case_dict:
+        case_dict["case:concept:name"] = f"case_{idx}"
+    return case_dict
+
+
+def _extract_event_indices(sentence: Sequence[str]) -> list[int]:
+    """Find indices of concept:name tokens in a sentence."""
+    return [i for i, s in enumerate(sentence) if s.startswith("concept:name")]
+
+
+def _split_sentence_into_events(
+    sentence: Sequence[str], event_indices: list[int]
+) -> list[Sequence[str]]:
+    """Split a sentence into individual events based on concept:name indices."""
+    if not event_indices:
+        raise ValueError("Trace does not contain any concept:name tokens.")
+    event_indices_copy = event_indices.copy()
+    event_indices_copy.pop(0)
+    return list(np.split(sentence, event_indices_copy))
+
+
+def _build_event_dict_list(
+    events: list[Sequence[str]], case_dict: dict[str, str]
+) -> list[dict[str, str]]:
+    """Build list of event dictionaries with case attributes attached."""
+    event_dict_list = []
+    for event in events:
+        event_dict = {word.split("==")[0]: word.split("==")[1] for word in event}
+        event_dict.update(case_dict)
+        event_dict_list.append(event_dict)
+    return event_dict_list
+
+
 def create_dataframe_from_sentences(
     transformed_sentences: Sequence[Sequence[str]], dict_dtypes: dict[str, dict[str, str]]
 ) -> pd.DataFrame:
@@ -269,23 +309,10 @@ def create_dataframe_from_sentences(
 
     for idx, sentence in enumerate(transformed_sentences):
         try:
-            case_dict = {
-                word.split("==")[0]: word.split("==")[1]
-                for word in sentence
-                if word.split("==")[0].startswith("case:")
-            }
-            if "case:concept:name" not in case_dict:
-                case_dict["case:concept:name"] = f"case_{idx}"
-            event_indices = [i for i, s in enumerate(sentence) if s.startswith("concept:name")]
-            if not event_indices:
-                raise ValueError("Trace does not contain any concept:name tokens.")
-            event_indices.pop(0)
-            events = np.split(sentence, event_indices)
-            event_dict_list = []
-            for event in events:
-                event_dict = {word.split("==")[0]: word.split("==")[1] for word in event}
-                event_dict.update(case_dict)
-                event_dict_list.append(event_dict)
+            case_dict = _parse_case_dict(sentence, idx)
+            event_indices = _extract_event_indices(sentence)
+            events = _split_sentence_into_events(sentence, event_indices)
+            event_dict_list = _build_event_dict_list(events, case_dict)
             parsed_data.append(event_dict_list)
         except (IndexError, KeyError, ValueError):
             removed_traces += 1
@@ -346,9 +373,9 @@ def convert_column_dtype(column: pd.Series, dtype: str) -> pd.Series:
             col.replace(["", "nan", "NaN", "NULL", "null"], np.nan), errors="coerce"
         ).astype("Int64"),
         "float": lambda col: col.astype(float) if col.name != "time:timestamp" else col.astype(str),
-        "float64": lambda col: col.astype(float)
-        if col.name != "time:timestamp"
-        else col.astype(str),
+        "float64": lambda col: (
+            col.astype(float) if col.name != "time:timestamp" else col.astype(str)
+        ),
         "boolean": lambda col: col.astype(bool),
         "date": lambda col: col.astype(str),
         "string": lambda col: col.astype(str),

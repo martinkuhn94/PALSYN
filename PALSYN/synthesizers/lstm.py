@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import tensorflow as tf
 
@@ -10,7 +11,6 @@ from .base import BaseSynthesizer
 
 
 class LSTMSynthesizer(BaseSynthesizer):
-
     MODEL_TYPE = "LSTM"
 
     def __init__(

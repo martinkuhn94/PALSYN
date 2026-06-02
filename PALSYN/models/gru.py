@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import tensorflow as tf
 from keras import Input, Model
-from keras.layers import BatchNormalization, Bidirectional, Dense, Dropout, Embedding, GRU
+from keras.layers import GRU, BatchNormalization, Bidirectional, Dense, Dropout, Embedding
 
 from .base import Encoder, normalize_units, sanitize_column_names, stack_recurrent_layers
 

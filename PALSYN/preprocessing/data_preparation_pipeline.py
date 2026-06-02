@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from typing import Any
+
+from PALSYN.preprocessing.log_preprocessing import preprocess_event_log
+from PALSYN.preprocessing.log_tokenization import tokenize_log
+
 """Lightweight preprocessing pipeline for PALSYN.
 
 This module demonstrates how to separate data preparation from model handling.
@@ -9,11 +14,6 @@ later by whatever synthesizer consumes the prepared tensors. The
 ``DataPreparationPipeline`` returns plain dictionaries instead of custom base
 classes to prioritize readability.
 """
-
-from typing import Any
-
-from PALSYN.preprocessing.log_preprocessing import preprocess_event_log
-from PALSYN.preprocessing.log_tokenization import tokenize_log
 
 
 class DataPreparationPipeline:
