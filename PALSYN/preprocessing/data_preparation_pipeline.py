@@ -5,16 +5,6 @@ from typing import Any
 from PALSYN.preprocessing.log_preprocessing import preprocess_event_log
 from PALSYN.preprocessing.log_tokenization import tokenize_log
 
-"""Lightweight preprocessing pipeline for PALSYN.
-
-This module demonstrates how to separate data preparation from model handling.
-The pipeline purposefully ignores model-specific knobs such as training epochs,
-batch sizes, and optimizer privacy budgets so that those decisions can be made
-later by whatever synthesizer consumes the prepared tensors. The
-``DataPreparationPipeline`` returns plain dictionaries instead of custom base
-classes to prioritize readability.
-"""
-
 
 class DataPreparationPipeline:
     """Combine preprocessing and tokenization without touching the model layer."""

@@ -18,10 +18,15 @@ def tokenize_log(
 
     Parameters:
     event_log_sentences (Sequence[Sequence[str]]): Event log sentences represented as token lists.
-    steps (int): Number of tokens to predict jointly.
+    steps (int): Number of tokens to predict jointly. Default is 1.
 
     Returns:
-    tuple: ``(xs, ys, vocab_size, max_len, tokenizer)``.
+    tuple: ``(xs, ys, vocab_size, max_len, tokenizer)`` where:
+        - xs: Padded input sequences (num_samples, max_sequence_len)
+        - ys: Target sequences (num_samples, steps)
+        - vocab_size: Number of unique tokens in vocabulary
+        - max_len: Maximum sequence length
+        - tokenizer: Fitted Keras Tokenizer instance
 
     Raises:
     ValueError: If ``event_log_sentences`` is empty or ``steps`` < 1.

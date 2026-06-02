@@ -16,6 +16,15 @@ from tensorflow_privacy import compute_dp_sgd_privacy_statement
 _CPU_COUNT = os.cpu_count() or 1
 os.environ["LOKY_MAX_CPU_COUNT"] = str(max(_CPU_COUNT - 1, 1))
 
+# Epsilon allocation for differential privacy
+# Total epsilon is split as follows:
+# - DP Bounds: 50% (for numeric column bounds)
+# - DP KMeans: 25% (for trace clustering)
+# - DP-SGD: 25% (for model training noise)
+DP_EPSILON_BOUNDS_RATIO = 0.50
+DP_EPSILON_KMEANS_RATIO = 0.25
+DP_EPSILON_SGD_RATIO = 0.25
+
 START_TOKEN = "START==START"  # noqa: S105 - sentinel token marker
 END_TOKEN = "END==concept:name==END"  # noqa: S105 - sentinel token marker
 
@@ -181,16 +190,14 @@ def calculate_clusters(  # noqa: C901 - clustering has branching logic
         raise ValueError("max_clusters must be a positive integer")
 
     numeric_cols = df.select_dtypes(include=[np.number]).columns
-    df_org = df.copy()
-    df_cluster_list: list[pd.DataFrame] = []
+    df_cluster_list: list[tuple[pd.DataFrame, str]] = []
 
     dp_bounds: dict[str, tuple[list[float], list[float]]] | None = None
     epsilon_k_means: float | None = None
 
     if epsilon is not None:
-        epsilon_bounds = epsilon * 0.5
-        epsilon_k_means = epsilon * 0.5
-        dp_bounds = calculate_dp_bounds(df, epsilon_bounds)
+        epsilon_k_means = epsilon * DP_EPSILON_KMEANS_RATIO
+        dp_bounds = calculate_dp_bounds(df, epsilon * DP_EPSILON_BOUNDS_RATIO)
 
     for col in numeric_cols:
         df_clean = df[col].dropna()
@@ -201,6 +208,9 @@ def calculate_clusters(  # noqa: C901 - clustering has branching logic
         n_clusters = min(unique_values, max_clusters)
 
         X = df_clean.values.reshape(-1, 1)
+
+        # Store original values before clustering
+        original_values = df_clean.copy()
 
         if epsilon is not None:
             if dp_bounds is None or epsilon_k_means is None:
@@ -216,33 +226,62 @@ def calculate_clusters(  # noqa: C901 - clustering has branching logic
 
         clustering.fit(X)
 
-        label = []
-        for row in df.iterrows():
-            if str(row[1][col]) != "nan":
-                label_temp = clustering.predict([[row[1][col]]])
-                label.append(col + "_cluster_" + str(label_temp[0]))
-            else:
-                label.append(np.nan)
+        labels = _cluster_column(df, col, clustering)
 
-        df[col] = label
-        df_org[col + "_cluster_label"] = label
-        df_cluster_list.append(df_org[[col, col + "_cluster_label"]].dropna())
+        df[col] = labels
+        df_cluster_list.append(
+            (_create_cluster_dataframe_with_original(df, col, labels, original_values), col)
+        )
 
-    cluster_dict: dict[str, list[float]] = {}
-    for dataframe in df_cluster_list:
-        unique_cluster = dataframe[dataframe.columns[1]].unique()
-        for cluster in unique_cluster:
-            dataframe_temp_values = dataframe[dataframe[dataframe.columns[1]] == cluster]
-            dataframe_temp_cluster_values = dataframe_temp_values[dataframe_temp_values.columns[0]]
-            dataframe_temp_cluster_values_np = dataframe_temp_cluster_values.to_numpy()
-            cluster_dict[cluster] = [
-                min(dataframe_temp_cluster_values_np),
-                max(dataframe_temp_cluster_values_np),
-                dataframe_temp_cluster_values_np.mean(),
-                dataframe_temp_cluster_values_np.std(),
-            ]
+    cluster_dict = _build_cluster_dict(df_cluster_list)
 
     return df, cluster_dict
+
+
+def _cluster_column(
+    df: pd.DataFrame, col: str, clustering: Any
+) -> list[str]:
+    """Cluster a single column and return cluster labels."""
+    labels = []
+
+    for _, row in df.iterrows():
+        if pd.notna(row[col]):
+            label_temp = clustering.predict([[row[col]]])
+            labels.append(f"{col}_cluster_{label_temp[0]}")
+        else:
+            labels.append(np.nan)
+
+    return labels
+
+
+def _create_cluster_dataframe_with_original(
+    df: pd.DataFrame, col: str, labels: list[str], original_values: pd.Series
+) -> pd.DataFrame:
+    """Create a dataframe with cluster assignments and original values."""
+    df_cluster = df.copy()
+    df_cluster[f"{col}_cluster_label"] = labels
+    # Use reindex to preserve original index and values
+    df_cluster[f"{col}_original"] = original_values.reindex(df_cluster.index)
+    return df_cluster[[f"{col}_original", f"{col}_cluster_label"]].dropna()
+
+
+def _build_cluster_dict(df_cluster_list: list[tuple[pd.DataFrame, str]]) -> dict[str, list[float]]:
+    """Build cluster statistics dictionary from cluster dataframes."""
+    cluster_dict: dict[str, list[float]] = {}
+    for dataframe, original_col in df_cluster_list:
+        cluster_label_col = f"{original_col}_cluster_label"
+        original_value_col = f"{original_col}_original"
+        unique_cluster = dataframe[cluster_label_col].unique()
+        for cluster in unique_cluster:
+            cluster_data = dataframe[dataframe[cluster_label_col] == cluster]
+            cluster_values = cluster_data[original_value_col].to_numpy()
+            cluster_dict[cluster] = [
+                float(np.min(cluster_values)),
+                float(np.max(cluster_values)),
+                float(np.mean(cluster_values)),
+                float(np.std(cluster_values)),
+            ]
+    return cluster_dict
 
 
 def calculate_starting_epoch(df: pd.DataFrame, epsilon: float | None = None) -> list[float]:
@@ -396,97 +435,27 @@ def preprocess_event_log(
     Returns:
     tuple: Processed event log data and metadata
     """
-    try:
-        df = pm4py.convert_to_dataframe(log)
-    except Exception as e:
-        raise ValueError("Error converting log to DataFrame") from e
-
-    print("Number of traces: " + str(df["case:concept:name"].unique().size))
-
-    trace_length = df.groupby("case:concept:name").size()
-    trace_length_q = trace_length.quantile(trace_quantile)
-    df = df.groupby("case:concept:name").filter(lambda x: len(x) <= trace_length_q)
-
-    print("Number of traces after truncation: " + str(df["case:concept:name"].unique().size))
-    df = df.sort_values(by=["case:concept:name", "time:timestamp"])
+    df = _convert_log_to_dataframe(log)
+    df = _filter_traces_by_quantile(df, trace_quantile)
     num_examples = len(df)
 
-    if epsilon is None:
-        print("No Epsilon is specified setting noise multiplier to 0")
-        noise_multiplier = 0.0
-        starting_epoch_dist = calculate_starting_epoch(df)
-        time_between_events = calculate_time_between_events(df)
-        df["time:timestamp"] = time_between_events
-        attribute_dtype_mapping = get_attribute_dtype_mapping(df)
-        df, cluster_dict = calculate_clusters(df, max_clusters)
-    else:
-        print("Finding Optimal Noise Multiplier")
-        epsilon_noise_multiplier = epsilon / 2
-        epsilon_k_means = epsilon / 2
-        noise_multiplier = find_noise_multiplier(
-            epsilon_noise_multiplier, num_examples, batch_size, epochs
-        )
-        # Epsilon does not need to be shared here since the first timestamp defines a
-        # distinct dataset.
-        starting_epoch_dist = calculate_starting_epoch(df, epsilon)
-        time_between_events = calculate_time_between_events(df)
-        df["time:timestamp"] = time_between_events
-        attribute_dtype_mapping = get_attribute_dtype_mapping(df)
-        df, cluster_dict = calculate_clusters(df, max_clusters, epsilon_k_means)
+    _print_trace_statistics(df)
 
-    cols = ["concept:name", "time:timestamp"] + [
-        col for col in df.columns if col not in ["concept:name", "time:timestamp"]
-    ]
-    df = df[cols]
+    df = df.sort_values(by=["case:concept:name", "time:timestamp"])
 
-    event_log_sentence_list: list[list[str]] = []
-    total_traces = df["case:concept:name"].nunique()
+    noise_multiplier, starting_epoch_dist, time_between_events = _process_timestamps(
+        df, epsilon, batch_size, epochs
+    )
+    df["time:timestamp"] = time_between_events
 
-    num_cols = len(df.columns) - 1
-    column_list = df.columns.tolist()
+    attribute_dtype_mapping = get_attribute_dtype_mapping(df)
+    df, cluster_dict = _process_clusters(df, max_clusters, epsilon)
 
-    if "case:concept:name" in column_list:
-        column_list.remove("case:concept:name")
+    df = _reorder_columns(df)
 
-    # Pre-filter global attributes once
-    global_attributes = [
-        col for col in df.columns if col.startswith("case:") and col != "case:concept:name"
-    ]
-
-    # Use groupby instead of filtering for each trace
-    for i, (_, trace_group) in enumerate(df.groupby("case:concept:name"), 1):
-        progress = min(99.9, (i / total_traces) * 100)
-        if i % 100 == 0:  # Update progress less frequently
-            print(f"\rProcessing traces: {progress:.1f}%", end="", flush=True)
-
-        # Initialize trace sentence
-        trace_sentence_list = [START_TOKEN] * num_cols
-
-        # Handle global attributes (case: attributes)
-        trace_sentence_list.extend(
-            [f"{attr}=={str(trace_group[attr].iloc[0])}" for attr in global_attributes]
-        )
-
-        # Process trace events - drop case:concept:name once
-        trace_data = trace_group.drop(columns=["case:concept:name"])
-        concept_names = trace_data["concept:name"].values
-
-        # Process each event in the trace
-        for idx, row in enumerate(trace_data.values):
-            concept_name = concept_names[idx]
-            trace_sentence_list.extend(
-                [
-                    f"{concept_name}=={col}=={str(val) if pd.notna(val) else 'nan'}"
-                    for col, val in zip(trace_data.columns, row)
-                ]
-            )
-
-        trace_sentence_list.extend([END_TOKEN] * num_cols)
-        event_log_sentence_list.append(trace_sentence_list)
-
-    # Print 100% at completion with carriage return
-    print("\rProcessing traces: 100.0%", end="", flush=True)
-    print()  # New line after completion
+    event_log_sentence_list, column_list, num_cols = _build_event_log_sentences(
+        df, num_examples
+    )
 
     return (
         event_log_sentence_list,
@@ -498,3 +467,144 @@ def preprocess_event_log(
         num_cols,
         column_list,
     )
+
+
+def _convert_log_to_dataframe(log: Any) -> pd.DataFrame:
+    """Convert event log to DataFrame with error handling."""
+    try:
+        return pm4py.convert_to_dataframe(log)
+    except Exception as e:
+        raise ValueError(f"Error converting log to DataFrame: {e}") from e
+
+
+def _filter_traces_by_quantile(df: pd.DataFrame, trace_quantile: float) -> pd.DataFrame:
+    """Filter traces by quantile to remove overly long traces."""
+    trace_length = df.groupby("case:concept:name").size()
+    trace_length_q = trace_length.quantile(trace_quantile)
+    return df.groupby("case:concept:name").filter(lambda x: len(x) <= trace_length_q)
+
+
+def _print_trace_statistics(df: pd.DataFrame) -> None:
+    """Print trace count statistics."""
+    num_traces = df["case:concept:name"].unique().size
+    print(f"Number of traces: {num_traces}")
+
+
+def _process_timestamps(
+    df: pd.DataFrame, epsilon: float | None, batch_size: int, epochs: int
+) -> tuple[float, list[float], list[float]]:
+    """Process timestamps and compute noise multiplier for DP."""
+    if epsilon is None:
+        print("No Epsilon is specified setting noise multiplier to 0")
+        noise_multiplier = 0.0
+        starting_epoch_dist = calculate_starting_epoch(df)
+        time_between_events = calculate_time_between_events(df)
+    else:
+        print("Finding Optimal Noise Multiplier")
+        epsilon_sgd = epsilon * DP_EPSILON_SGD_RATIO
+        noise_multiplier = find_noise_multiplier(
+            epsilon_sgd, len(df), batch_size, epochs
+        )
+        starting_epoch_dist = calculate_starting_epoch(df, epsilon)
+        time_between_events = calculate_time_between_events(df)
+
+    return noise_multiplier, starting_epoch_dist, time_between_events
+
+
+def _process_clusters(
+    df: pd.DataFrame, max_clusters: int, epsilon: float | None
+) -> tuple[pd.DataFrame, dict[str, list[float]]]:
+    """Process numeric columns with clustering."""
+    if epsilon is None:
+        return calculate_clusters(df, max_clusters)
+    else:
+        return calculate_clusters(df, max_clusters, epsilon)
+
+
+def _reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Reorder columns to put standard columns first."""
+    cols = ["concept:name", "time:timestamp"] + [
+        col for col in df.columns if col not in ["concept:name", "time:timestamp"]
+    ]
+    return df[cols]
+
+
+def _build_event_log_sentences(
+    df: pd.DataFrame, num_examples: int
+) -> tuple[list[list[str]], list[str], int]:
+    """Build event log sentences from DataFrame."""
+    column_list = df.columns.tolist()
+    if "case:concept:name" in column_list:
+        column_list.remove("case:concept:name")
+
+    num_cols = len(column_list)
+
+    global_attributes = [
+        col for col in df.columns if col.startswith("case:") and col != "case:concept:name"
+    ]
+
+    event_log_sentence_list = _create_sentence_list(
+        df, global_attributes, column_list, num_cols
+    )
+
+    return event_log_sentence_list, column_list, num_cols
+
+
+def _create_sentence_list(
+    df: pd.DataFrame,
+    global_attributes: list[str],
+    column_list: list[str],
+    num_cols: int,
+) -> list[list[str]]:
+    """Create list of event log sentences."""
+    event_log_sentence_list: list[list[str]] = []
+    total_traces = df["case:concept:name"].nunique()
+
+    for i, (_, trace_group) in enumerate(df.groupby("case:concept:name"), 1):
+        _update_progress(i, total_traces)
+
+        trace_sentence_list = _create_trace_sentence(
+            trace_group, global_attributes, column_list, num_cols
+        )
+        event_log_sentence_list.append(trace_sentence_list)
+
+    print("\rProcessing traces: 100.0%", end="", flush=True)
+    print()  # New line after completion
+
+    return event_log_sentence_list
+
+
+def _update_progress(current: int, total: int) -> None:
+    """Update and print progress."""
+    progress = min(99.9, (current / total) * 100)
+    if current % 100 == 0:
+        print(f"\rProcessing traces: {progress:.1f}%", end="", flush=True)
+
+
+def _create_trace_sentence(
+    trace_group: pd.DataFrame,
+    global_attributes: list[str],
+    column_list: list[str],
+    num_cols: int,
+) -> list[str]:
+    """Create a single trace sentence."""
+    trace_sentence_list = [START_TOKEN] * num_cols
+
+    trace_sentence_list.extend(
+        [f"{attr}=={str(trace_group[attr].iloc[0])}" for attr in global_attributes]
+    )
+
+    trace_data = trace_group.drop(columns=["case:concept:name"])
+    concept_names = trace_data["concept:name"].values
+
+    for idx, row in enumerate(trace_data.values):
+        concept_name = concept_names[idx]
+        trace_sentence_list.extend(
+            [
+                f"{concept_name}=={col}=={str(val) if pd.notna(val) else 'nan'}"
+                for col, val in zip(trace_data.columns, row)
+            ]
+        )
+
+    trace_sentence_list.extend([END_TOKEN] * num_cols)
+    return trace_sentence_list
