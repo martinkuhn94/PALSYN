@@ -8,11 +8,11 @@ By doing so, it can make it easier for researches to share synthetic data with s
 facilitating AI and process mining research. However, legal compliance, such as adherence to GDPR or 
 other similar regulations, must be confirmed before sharing data, even if strong differential private guarantees are used. 
 
-A detailed explanation of the algorithm and its workings can be found in our preprint:
-[PALSYN: A Method for Synthetic Multi-Perspective Event Log Generation with Differential Private Guarantees](https://www.researchsquare.com/article/rs-6565248/v1)
+A detailed explanation of the algorithm and its workings can be found in our publication:
+[PALSYN: A Method for Synthetic Multi-Perspective Event Log Generation with Differential Private Guarantees](https://link.springer.com/article/10.1007/s44311-025-00033-5)
 
 > **Research tag v0.0.1-research-alpha**  
-> This tag corresponds to the exact implementation used to generate the results reported in the paper
+> This tag corresponds to the exact implementation used to generate the results reported in our publication
 > _"PALSYN: A Method for Synthetic Multi-Perspective Event Log Generation with Differential Private Guarantees"_.
 > Later updates may introduce new models or streamline the approach, so use this tag if you need the precise version of the code used in the publication.
 
